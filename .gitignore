@@ -1,0 +1,6 @@
+/doc/javadoc/*
+/classes/
+/target/
+/logs/
+/target/
+README.md
