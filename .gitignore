@@ -3,4 +3,6 @@
 /target/
 /logs/
 /target/
+/var/
+/etc/
 README.md
