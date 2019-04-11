@@ -132,10 +132,14 @@ public class TrecTerrier {
 	/** whether to print the meta index */
 	protected boolean printmeta;
 
+	protected boolean initScore;
+	protected String srcWE;
+	protected String trgWE;
+
 	/**
-	  * Specifies whether to perform trec_eval like evaluation,
-	  * reporting only average precision for each query.
-	  */
+	 * Specifies whether to perform trec_eval like evaluation,
+	 * reporting only average precision for each query.
+	 */
 	protected boolean evaluation_per_query;
 	/**
 	 * Specifies if the evaluation is done for adhoc or named-page
@@ -311,6 +315,18 @@ public class TrecTerrier {
 					c = Double.parseDouble(args[pos].substring(2));
 				}
 			}
+			else if (args[pos].startsWith("--initScore"))
+				initScore = true;
+			
+			else if (args[pos].startsWith("--srcWE")) {
+				srcWE = args[pos].split("=")[1];
+			}
+			
+			
+			else if (args[pos].startsWith("--trgWE")) {
+				trgWE = args[pos].split("=")[1];;
+			}
+			
 			else if (evaluation)
 			{
 				evaluationFilename= args[pos];
@@ -520,9 +536,9 @@ public class TrecTerrier {
 					if (nomefile[i].indexOf("/") >= 0)
 						resultFilename = nomefile[i];
 					String evaluationResultFilename =
-						resultFilename.substring(
-							0,
-							resultFilename.lastIndexOf('.'))
+							resultFilename.substring(
+									0,
+									resultFilename.lastIndexOf('.'))
 							+ ".eval";
 					te.evaluate(resultFilename);
 					if (evaluation_per_query)
@@ -534,6 +550,12 @@ public class TrecTerrier {
 		} else if (inverted2direct) {
 			String[] builderCommand = {};
 			Inverted2DirectIndexBuilder.main(builderCommand);
+		} else if (initScore) {
+				
+			TRECQuerying trecQuerying = new TRECQuerying(queryexpand);
+			trecQuerying.initScore(srcWE, trgWE);
+			trecQuerying.close();
+			
 		}
 
 		long endTime = System.currentTimeMillis();
@@ -545,43 +567,43 @@ public class TrecTerrier {
 	 */
 	public void applyOptions(int status) throws Exception {
 		switch(status) {
-			case ERROR_NO_ARGUMENTS :
-				usage();
-				break;
-			case ERROR_NO_C_VALUE :
-				System.err.println("A value for the term frequency normalisation parameter");
-				System.err.println("is required. Please specify it with the option '-c value'");
-				break;
-			case ERROR_CONFLICTING_ARGUMENTS :
-				System.err.println("There is a conclict between the specified options. For example,");
-				System.err.println("option '-c' is used only in conjuction with option '-r'.");
-				System.err.println("In addition, options '-v' or '-d' are used only in conjuction");
-				System.err.println("with option '-i'");
-				break;
-			case ERROR_PRINT_DOCINDEX_FILE_NOT_EXISTS :
-				System.err.println("The specified document index file does not exist.");
-				break;
-			case ERROR_PRINT_DIRECT_FILE_NOT_EXISTS :
-				System.err.println("The specified direct index does not exist.");
-				break;
-			case ERROR_UNKNOWN_OPTION :
-				System.err.println("The option '" +unknownOption+"' is not recognised");
-				break;
-			case ERROR_EXPAND_NOT_RETRIEVE :
-				System.err.println("The option '-q' or '--queryexpand' can be used only while retrieving with option '-r'.");
-				break;
-			case ERROR_GIVEN_C_NOT_RETRIEVING :
-				System.err.println("A value for the parameter c can be specified only while retrieving with option '-r'.");
-				break;
-			case ERROR_HADOOP_NOT_RETRIEVAL :
-				System.err.println("Hadoop mode '-H' can only be used for indexing");
-				break;
-			case ERROR_HADOOP_ONLY_INDEX :
-				System.err.println("Hadoop mode '-H' can only be used for straightforward indexing");
-				break;
-			case ARGUMENTS_OK :
-			default :
-				run();
+		case ERROR_NO_ARGUMENTS :
+			usage();
+			break;
+		case ERROR_NO_C_VALUE :
+			System.err.println("A value for the term frequency normalisation parameter");
+			System.err.println("is required. Please specify it with the option '-c value'");
+			break;
+		case ERROR_CONFLICTING_ARGUMENTS :
+			System.err.println("There is a conclict between the specified options. For example,");
+			System.err.println("option '-c' is used only in conjuction with option '-r'.");
+			System.err.println("In addition, options '-v' or '-d' are used only in conjuction");
+			System.err.println("with option '-i'");
+			break;
+		case ERROR_PRINT_DOCINDEX_FILE_NOT_EXISTS :
+			System.err.println("The specified document index file does not exist.");
+			break;
+		case ERROR_PRINT_DIRECT_FILE_NOT_EXISTS :
+			System.err.println("The specified direct index does not exist.");
+			break;
+		case ERROR_UNKNOWN_OPTION :
+			System.err.println("The option '" +unknownOption+"' is not recognised");
+			break;
+		case ERROR_EXPAND_NOT_RETRIEVE :
+			System.err.println("The option '-q' or '--queryexpand' can be used only while retrieving with option '-r'.");
+			break;
+		case ERROR_GIVEN_C_NOT_RETRIEVING :
+			System.err.println("A value for the parameter c can be specified only while retrieving with option '-r'.");
+			break;
+		case ERROR_HADOOP_NOT_RETRIEVAL :
+			System.err.println("Hadoop mode '-H' can only be used for indexing");
+			break;
+		case ERROR_HADOOP_ONLY_INDEX :
+			System.err.println("Hadoop mode '-H' can only be used for straightforward indexing");
+			break;
+		case ARGUMENTS_OK :
+		default :
+			run();
 		}
 	}
 

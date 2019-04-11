@@ -31,14 +31,22 @@ package org.terrier.applications.batchquerying;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +57,7 @@ import org.terrier.querying.Manager;
 import org.terrier.querying.Request;
 import org.terrier.querying.SearchRequest;
 import org.terrier.structures.Index;
+import org.terrier.structures.LexiconEntry;
 import org.terrier.structures.cache.NullQueryResultCache;
 import org.terrier.structures.cache.QueryResultCache;
 import org.terrier.structures.outputformat.OutputFormat;
@@ -59,6 +68,9 @@ import org.terrier.structures.outputformat.NullOutputFormat;
 import org.terrier.utility.ApplicationSetup;
 import org.terrier.utility.ArrayUtils;
 import org.terrier.utility.Files;
+
+import com.google.common.collect.Ordering;
+import com.google.common.collect.TreeMultimap;
 
 /**
  * This class performs a batch mode retrieval from a set of TREC queries. 
@@ -160,10 +172,10 @@ import org.terrier.utility.Files;
  */
 public class TRECQuerying {
 
-	
+
 	/** The name of the query expansion model used. */
 	protected String defaultQEModel;
-	
+
 	/** The logger used */
 	protected static final Logger logger = LoggerFactory.getLogger(TRECQuerying.class);
 
@@ -177,7 +189,7 @@ public class TRECQuerying {
 
 	/** the boolean indicates whether to expand queries */
 	protected boolean queryexpansion = false;
-	
+
 	/** The file to store the output to. */
 	protected PrintWriter resultFile;
 	protected OutputStream resultFileRaw;
@@ -246,10 +258,16 @@ public class TRECQuerying {
 	/** Where results of the stream of queries are output to. Specified by property <tt>trec.querying.outputformat</tt> -
 	 * defaults to TRECDocnoOutputFormat */
 	protected OutputFormat printer;
-	
+
 	/** results are obtained a query cache is one is enabled. Configured to a class
 	 * using property <tt>trec.querying.resultscache</tt>. Defaults to NullQueryResultCache (no caching). */
 	protected QueryResultCache resultsCache;
+
+
+	// my custom
+
+	public HashMap<String, TreeMultimap<Double, String> > w2v_inverted_translation = new HashMap<String, TreeMultimap<Double, String> >();
+
 
 	/**
 	 * TRECQuerying default constructor initialises the inverted index, the
@@ -262,7 +280,7 @@ public class TRECQuerying {
 		this.printer = getOutputFormat();
 		this.resultsCache = getResultsCache();
 	}
-	
+
 	/**
 	 * TRECQuerying constructor initialises the inverted index, the
 	 * lexicon and the document index structures.
@@ -296,7 +314,7 @@ public class TRECQuerying {
 		try {
 			String className = ApplicationSetup.getProperty(
 					"trec.querying.resultscache", NullQueryResultCache.class
-							.getName());
+					.getName());
 			if (!className.contains("."))
 				className = "org.terrier.applications.TRECQuerying$"
 						+ className;
@@ -308,7 +326,7 @@ public class TRECQuerying {
 		}
 		return rtr;
 	}
-	
+
 	protected OutputFormat getOutputFormat() {
 		OutputFormat rtr = null;
 		try {
@@ -404,7 +422,7 @@ public class TRECQuerying {
 			try {
 				index.close();
 			} catch (IOException e) {
-		}
+			}
 	}
 
 	/**
@@ -424,7 +442,7 @@ public class TRECQuerying {
 		}
 		else if (type.equals("random"))
 		{
-			 return getRandomQueryCounter();
+			return getRandomQueryCounter();
 		}
 		else
 		{
@@ -439,10 +457,10 @@ public class TRECQuerying {
 	 */
 	protected String getRandomQueryCounter() {
 		return ""
-		/* seconds since epoch */
-		+ (System.currentTimeMillis() / 1000) + "-"
-		/* random number in range 0-1000 */
-		+ random.nextInt(1000);
+				/* seconds since epoch */
+				+ (System.currentTimeMillis() / 1000) + "-"
+				/* random number in range 0-1000 */
+				+ random.nextInt(1000);
 	}
 
 	/**
@@ -570,6 +588,184 @@ public class TRECQuerying {
 		return processQuery(queryId, query, cParameter, true);
 	}
 
+
+	public void initScore(String srcWE, String trgWE) throws NumberFormatException, IOException {
+		System.out.println("initScore....");
+
+		String filepath = "score.ser";
+
+		File f = new File(filepath);
+		if(f.exists()) { 
+			/* load the matrix that has been serialised to disk */ 
+			System.out.println("Translations file already exists");
+			//this.readW2VSerialised(f.getAbsolutePath());
+		}
+
+		else {
+
+			System.out.println("Translations file not exist ");
+
+			HashMap<String, double[]> w2vmatrix = new HashMap<String, double[]>();
+			BufferedReader br = new BufferedReader(new FileReader(srcWE));
+			String line = null;
+			int count=0;
+			int numberofdimensions=0;
+			int foundterms=0;
+			while ((line = br.readLine()) != null) {
+
+				if(count==0) {
+					//this is the first line: it says how many words and how many dimensions
+					String[] input = line.split(" ");
+					numberofdimensions = Integer.parseInt(input[1]);
+					count++;
+					continue;
+				}
+
+
+				String[] input = line.split(" ");
+				String term = input[0];
+				LexiconEntry lEntry = index.getLexicon().getLexiconEntry(term);
+				//screen the term for out of vacabulary and not in the threshold range
+				if (lEntry==null)
+				{
+					//System.err.println("W2V Term Not Found: "+term);
+					continue;
+				}
+
+				//if(lEntry.getFrequency()<this.rarethreshold || lEntry.getDocumentFrequency()<this.rarethreshold 
+				//		|| lEntry.getDocumentFrequency()>this.topthreshold || term.matches(".*\\d+.*"))
+				//	continue;
+
+				foundterms++;
+				int dimension=0;
+				double[] vector = new double[numberofdimensions];
+				for(int i=1; i<input.length;i++) {
+					vector[dimension] = Double.parseDouble(input[i]);
+					dimension++;
+				}
+				w2vmatrix.put(term, vector);
+				count++;
+			}
+			System.out.println("Terms founds in word2vec: " + foundterms);
+			br.close();
+
+			//HashMap<String, TreeMultimap<Double, String> > inverted_translation = new HashMap<String, TreeMultimap<Double, String> >();
+			for(String w : w2vmatrix.keySet()) {
+				double[] vector_w = w2vmatrix.get(w);
+				TreeMultimap<Double, String> inverted_translation_w = TreeMultimap.create(Ordering.natural().reverse(), Ordering.natural());
+				HashMap<String,Double> tmp_w = new HashMap<String,Double>();
+				double sum_cosines=0.0;
+				for(String u : w2vmatrix.keySet()) {
+					double[] vector_u = w2vmatrix.get(u);
+					double cosine_w_u=0.0;
+					double sum_w=0.0;
+					double sum_u=0.0;
+					for(int i=0; i<vector_w.length;i++) {
+						cosine_w_u=cosine_w_u + vector_w[i]*vector_u[i];
+						sum_w=sum_w + Math.pow(vector_w[i],2);
+						sum_u=sum_u + Math.pow(vector_u[i],2);
+					}
+					//System.out.println("Un-normalised cosine: " + cosine_w_u);
+					//normalisation step
+					cosine_w_u = cosine_w_u / (Math.sqrt(sum_w) * Math.sqrt(sum_u));
+					//System.out.println("normalised cosine: " + cosine_w_u);
+					tmp_w.put(u, cosine_w_u);
+					sum_cosines = sum_cosines+ cosine_w_u;
+				}
+				//normalise to probabilities and insert in order
+				for(String u: tmp_w.keySet()) {
+					double p_w2v_w_u = tmp_w.get(u)/sum_cosines;
+					inverted_translation_w.put(p_w2v_w_u, u);
+				}
+				w2v_inverted_translation.put(w, inverted_translation_w);
+			}
+			this.writemap(f.getAbsolutePath());
+		}
+		System.out.println("Initialisation of word2vec finished");
+
+
+
+	}
+
+
+
+
+	/*
+
+		// Creating a HashMap of Integer keys and String values
+		HashMap<Integer, String> hashmap = new HashMap<Integer, String>();
+		hashmap.put(1, "Value1");
+		hashmap.put(2, "Value2");
+		hashmap.put(3, "Value3");
+		hashmap.put(4, "Value4");
+		hashmap.put(5, "Value5");
+		try
+		{
+			FileOutputStream fos =
+					new FileOutputStream("hashmap.ser");
+			ObjectOutputStream oos = new ObjectOutputStream(fos);
+			oos.writeObject(hashmap);
+			oos.close();
+			fos.close();
+			System.out.println("Serialized HashMap data is saved in hashmap.ser");
+		}catch(IOException ioe)
+		{
+			ioe.printStackTrace();
+		}
+
+
+
+		HashMap<Integer, String> map = null;
+	      try
+	      {
+	         FileInputStream fis = new FileInputStream("hashmap.ser");
+	         ObjectInputStream ois = new ObjectInputStream(fis);
+	         map = (HashMap) ois.readObject();
+	         ois.close();
+	         fis.close();
+	      }catch(IOException ioe)
+	      {
+	         ioe.printStackTrace();
+	         return;
+	      }catch(ClassNotFoundException c)
+	      {
+	         System.out.println("Class not found");
+	         c.printStackTrace();
+	         return;
+	      }
+	      System.out.println("Deserialized HashMap");
+	      // Display content using Iterator
+	      Set set = map.entrySet();
+	      Iterator iterator = set.iterator();
+	      while(iterator.hasNext()) {
+	         Map.Entry mentry = (Map.Entry)iterator.next();
+	         System.out.print("key: "+ mentry.getKey() + " & Value: ");
+	         System.out.println(mentry.getValue());
+	      }
+
+
+	 */
+
+
+	/** Serializes the object of type HashMap<String, TreeMultimap<Double, String> > (w2v serialised inverted map) to a file
+	 * 
+	 * @param filepath - the path of the file on disk containing the w2v serialised inverted map
+	 */
+	public void writemap(String filepath){
+		try{
+			FileOutputStream fos=new FileOutputStream(filepath);
+			ObjectOutputStream oos=new ObjectOutputStream(fos);
+			oos.writeObject(this.w2v_inverted_translation);
+			oos.flush();
+			oos.close();
+			fos.close();
+		}catch(Exception e){}
+	}
+
+
+
+
+
 	/**
 	 * According to the given parameters, it sets up the correct matching class
 	 * and performs retrieval for the given query.
@@ -608,7 +804,7 @@ public class TRECQuerying {
 				((RawOutputFormat) printer).writeResults(resultFileRaw, srq, method, ITERATION + "0", RESULTS_LENGTH);
 			else
 				printer.printResults(resultFile, srq, method, ITERATION + "0", RESULTS_LENGTH);
-			
+
 		} catch (IOException ioe) {
 			logger.error("Problem writing results file:", ioe);
 		}
@@ -654,24 +850,25 @@ public class TRECQuerying {
 		srq.setControl("c_set", "" + c_set);
 
 		srq.addMatchingModel(mModel, wModel);
-		
+
 		if (queryexpansion) {
 			//if (srq.getControl("qemodel").length() == 0)
 			srq.setControl("qemodel", defaultQEModel);
 			srq.setControl("qe", "on");
 		}
-		
+
 		preQueryingSearchRequestModification(queryId, srq);
 		ResultSet rs = resultsCache.checkCache(srq);
 		if (rs != null)
 			((Request)rs).setResultSet(rs);
-		
-		
+
+
 		if (logger.isInfoEnabled())
 			logger.info("Processing query: " + queryId + ": '" + query + "'");
 		matchingCount++;
 		queryingManager.runPreProcessing(srq);
-		queryingManager.runMatching(srq);
+		//queryingManager.runMatching(srq);
+		queryingManager.runMatchingWeCLTLM(srq);
 		queryingManager.runPostProcessing(srq);
 		queryingManager.runPostFilters(srq);
 		resultsCache.add(srq);
@@ -770,22 +967,22 @@ public class TRECQuerying {
 		final long startTime = System.currentTimeMillis();
 		boolean doneSomeMethods = false;
 		boolean doneSomeTopics = false;
-		
+
 		wModel = ApplicationSetup.getProperty("trec.model", InL2.class.getName());		
 		defaultQEModel = ApplicationSetup.getProperty("trec.qe.model", Bo1.class.getName());
-		
+
 		// iterating through the queries
 		while (querySource.hasNext()) {
 			String query = querySource.next();
 			String qid = querySource.getQueryId();
-			qid = qid.substring(1,qid.length());
+			//qid = qid.substring(1,qid.length());
 			// process the query
 			long processingStart = System.currentTimeMillis();
 			processQueryAndWrite(qid, query, c, c_set);
 			long processingEnd = System.currentTimeMillis();
 			if (logger.isInfoEnabled())
 				logger.info("Time to process query: "
-					+ ((processingEnd - processingStart) / 1000.0D));
+						+ ((processingEnd - processingStart) / 1000.0D));
 			doneSomeTopics = true;
 		}
 		querySource.reset();
@@ -797,9 +994,9 @@ public class TRECQuerying {
 			printSettings(queryingManager.newSearchRequest(""),
 					querySource.getInfo(),
 					"# run started at: " + startTime
-							+ "\n# run finished at "
-							+ System.currentTimeMillis() + "\n# c=" + c
-							+ " c_set=" + c_set + "\n# model=" + wModel);
+					+ "\n# run finished at "
+					+ System.currentTimeMillis() + "\n# c=" + c
+					+ " c_set=" + c_set + "\n# model=" + wModel);
 
 		if (doneSomeTopics && doneSomeMethods)
 			logger.info("Finished topics, executed " + matchingCount
@@ -859,5 +1056,7 @@ public class TRECQuerying {
 			logger.warn("Couldn't write settings out to disk in TRECQuerying (.res.settings)", ioe);
 		}
 	}
+
+
 
 }
