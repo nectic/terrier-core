@@ -4,9 +4,6 @@
 /logs/
 /target/
 /var/
-<<<<<<< HEAD
 /etc/
 score.ser
-=======
-/etc/
->>>>>>> f2246e4f9c5cb514c614396a09035fea1d936863
+/bin/
