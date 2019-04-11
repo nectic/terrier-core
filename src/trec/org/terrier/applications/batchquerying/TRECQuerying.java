@@ -975,7 +975,11 @@ public class TRECQuerying {
 		while (querySource.hasNext()) {
 			String query = querySource.next();
 			String qid = querySource.getQueryId();
+<<<<<<< HEAD
 			//qid = qid.substring(1,qid.length());
+=======
+			qid = qid.substring(1,qid.length());
+>>>>>>> f2246e4f9c5cb514c614396a09035fea1d936863
 			// process the query
 			long processingStart = System.currentTimeMillis();
 			processQueryAndWrite(qid, query, c, c_set);
