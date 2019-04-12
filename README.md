@@ -3,9 +3,17 @@ clir terrier-core****
 
 embeddings/wiki.en.vec
 
-bin/trec_terrier.sh --initScore --srcWE=/Volumes/SDEXT/these/vectors_ap8889_skipgram_s1000_w10_neg20_hs0_sam1e-4_iter5.txt --trgWE=/Volumes/SDEXT/these/wiki.en.mapped.vec
+bin/trec_terrier.sh --initScore --srcWE=/Volumes/SDEXT/these/vectors_ap8889_skipgram_s1000_w10_neg20_hs0_sam1e-4_iter5.txt --trgWE=/Volumes/SDEXT/these/vectors_ap8889_skipgram_s1000_w10_neg20_hs0_sam1e-4_iter5.txt -Dtrec.topics=share/vaswani_npl/query-text.trec
+
+bin/trec_terrier.sh --initScore --srcWE=/Volumes/SDEXT/these/vectors_ap8889_skipgram_s1000_w10_neg20_hs0_sam1e-4_iter5.txt --trgWE=/Volumes/SDEXT/these/vectors_ap8889_skipgram_s1000_w10_neg20_hs0_sam1e-4_iter5.txt
 
 
+--initScore --srcWE=/Volumes/SDEXT/these/wiki.fr.mapped.vec --trgWE=/Volumes/SDEXT/these/wiki.en.mapped.vec
+
+
+-Dtrec.topics=share/vaswani_npl/query-text.trec
+
+share/clef/query_title_fr.trec
 
 Translations for design
 	  0.0821867993788788: layout

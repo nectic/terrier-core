@@ -838,8 +838,8 @@ public class TRECQuerying {
 			
 			System.out.println("Translations file not exist ");
 
-			//serializeSrcWe(srcWE);
-			serializeSrcWeCl(srcWE);
+			serializeSrcWe(srcWE);
+			//serializeSrcWeCl(srcWE);
 			serializeTrgWe(trgWE);
 			
 

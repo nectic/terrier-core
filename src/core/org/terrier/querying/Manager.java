@@ -214,7 +214,7 @@ public class Manager
 		this.load_postprocess_controls();
 		this.load_postfilters_controls();
 		//my custom
-		//this.load_w2v_inverted_translation();
+		this.load_w2v_inverted_translation();
 	}
 	/* ----------------------- Initialisation methods --------------------------*/
 
