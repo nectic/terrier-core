@@ -27,8 +27,10 @@
 package org.terrier.querying;
 import gnu.trove.TIntArrayList;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.util.ArrayList;
@@ -36,6 +38,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Properties;
@@ -59,10 +62,13 @@ import org.terrier.querying.parser.QueryParserException;
 import org.terrier.querying.parser.RequirementQuery;
 import org.terrier.querying.parser.SingleTermQuery;
 import org.terrier.structures.Index;
+import org.terrier.structures.LexiconEntry;
+import org.terrier.structures.postings.IterablePosting;
 import org.terrier.terms.BaseTermPipelineAccessor;
 import org.terrier.terms.TermPipelineAccessor;
 import org.terrier.utility.ApplicationSetup;
 
+import com.google.common.collect.Ordering;
 import com.google.common.collect.TreeMultimap;
 /**
  * This class is responsible for handling/co-ordinating the main high-level
@@ -181,7 +187,9 @@ public class Manager
 
 	// my custom
 	public HashMap<String, TreeMultimap<Double, String> > w2v_inverted_translation = new HashMap<String, TreeMultimap<Double, String> >();
-	public int number_of_top_translation_terms=10; //default value
+	HashMap<String, double[]> fullw2vmatrix = new HashMap<String, double[]>();
+	public int number_of_top_translation_terms=1; //default value
+	
 
 	/** Default constructor. Use the default index
 	 * @since 2.0 */
@@ -205,6 +213,8 @@ public class Manager
 		this.load_preprocess_controls();
 		this.load_postprocess_controls();
 		this.load_postfilters_controls();
+		//my custom
+		//this.load_w2v_inverted_translation();
 	}
 	/* ----------------------- Initialisation methods --------------------------*/
 
@@ -244,6 +254,17 @@ public class Manager
 		}
 		//String def_c = null;
 		Defaults_Size = Default_Controls.size();
+	}
+	
+	protected void load_w2v_inverted_translation() {
+		System.out.println("load_w2v_inverted_translation...");
+		String filepath = "score.ser";
+		File f = new File(filepath);
+		if(f.exists()) { 
+			// load the matrix that has been serialised to disk  
+			System.out.println("Loading translations from file");
+			this.readW2VSerialised(f.getAbsolutePath());
+		}
 	}
 
 	protected static final String[] tinySingleStringArray = new String[0];
@@ -631,6 +652,15 @@ public class Manager
 		query.obtainQueryTerms(queryTerms);
 		rq.setMatchingQueryTerms(queryTerms);
 	}
+	
+	
+	public void runPreProcessingTLM(SearchRequest srq) {
+		
+		
+		
+	}
+	
+	
 	/** Runs the weighting and matching stage - this the main entry
 	 * into the rest of the Terrier framework.
 	 * @param srq the current SearchRequest object.
@@ -736,15 +766,206 @@ public class Manager
 			rq.setResultSet(new QueryResultSet(0));
 		}
 	}
+	
+	
+	public void runMatchingWeMonoTLM(SearchRequest srq){
+		Request rq = (Request)srq;
+		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
+		{			
+			Model wmodel = getWeightingModel(rq);
+			if (rq.getControl("c_set").equals("true"))
+			{
+				wmodel.setParameter(Double.parseDouble(rq.getControl("c")));
+			}
 
+			WeightingModel model = (WeightingModel)wmodel;
 
+			try{
+				
+				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
+				String[] queryTerms = rq.getQuery().toString().split(" ");
+				final long starttime = System.currentTimeMillis();		
+
+				for(int i=0; i<queryTerms.length;i++){
+					//assignScores(i, (AccumulatorResultSet) resultSet, plm.getPosting(i));
+					AccumulatorResultSet rs = (AccumulatorResultSet) resultSet;
+					int docid;
+					double score;
+					String w = queryTerms[i];
+					String wPipelined = tpa.pipelineTerm(queryTerms[i]);
+					if(wPipelined==null) {
+						System.err.println("Term delected after pipeline: "+w);
+						continue;
+					}
+
+					HashMap<String, Double> top_translations_of_w = getTopW2VTranslations(w);
+
+					for(String u : top_translations_of_w.keySet()) {
+						String uPipelined = tpa.pipelineTerm(u);
+						if(uPipelined==null) {
+							System.err.println("Translated Term delected after pipeline: "+u);
+							continue;
+						}
+						LexiconEntry lEntry = index.getLexicon().getLexiconEntry(uPipelined);
+						if (lEntry==null)
+						{
+							System.err.println("Term Not Found: "+uPipelined);
+							continue;
+						}
+						IterablePosting postings = index.getInvertedIndex().getPostings(lEntry);
+						while (postings.next() != IterablePosting.EOL) {			
+							model.setCollectionStatistics(this.index.getCollectionStatistics());
+							model.setEntryStatistics(lEntry);
+							model.setKeyFrequency(1);
+							model.setParameter(0.75);
+							model.prepare();
+							score =	model.score(postings);
+							docid = postings.getId();
+							rs.scoresMap.adjustOrPutValue(docid, score, score);
+							rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
+						}
+
+					}
+				}
+
+				resultSet.initialise();
+
+				int numberOfRetrievedDocuments = resultSet.getExactResultSize();
+				if (logger.isDebugEnabled())
+					logger.debug("Time to match "+numberOfRetrievedDocuments+" results: " + (System.currentTimeMillis() - starttime) + "ms");
+
+				//check to see if we have any negative infinity scores that should be removed
+				int badDocuments = 0;
+				for (int i = 0; i < resultSet.getResultSize(); i++) {
+					if (resultSet.getScores()[i] == Double.NEGATIVE_INFINITY)
+						badDocuments++;
+				}
+				logger.debug("Found "+badDocuments+" documents with a score of negative infinity in the result set returned, they will be removed.");
+
+				//now crop the collectionresultset down to a query result set.
+				rq.setResultSet(resultSet.getResultSet(0, resultSet.getResultSize()-badDocuments));
+			} catch (IOException ioe) {
+				logger.error("Problem running Matching, returning empty result set as query"+rq.getQueryID(), ioe);
+				rq.setResultSet(new QueryResultSet(0));
+			}
+		}
+		else
+		{
+			logger.warn("Returning empty result set as query "+rq.getQueryID()+" is empty");
+			rq.setResultSet(new QueryResultSet(0));
+		}
+		
+	
+	}
+	
+	public void runMatchingWeCL(SearchRequest srq){
+		Request rq = (Request)srq;
+		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
+		{			
+			Model wmodel = getWeightingModel(rq);
+			if (rq.getControl("c_set").equals("true"))
+			{
+				wmodel.setParameter(Double.parseDouble(rq.getControl("c")));
+			}
+
+			WeightingModel model = (WeightingModel)wmodel;
+			
+			
+			try{
+				
+				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
+				String[] queryTerms = rq.getQuery().toString().split(" ");
+				final long starttime = System.currentTimeMillis();
+				
+				File stopWordsFile = new File("share/stopwords-fr.txt"); 
+				BufferedReader brStopWordsFile = new BufferedReader(new FileReader(stopWordsFile)); 
+				List<String> stopwords = new ArrayList<String>();		
+				String st; 
+				while ((st = brStopWordsFile.readLine()) != null) {
+					stopwords.add(st);
+				}
+				brStopWordsFile.close();
+				
+
+				for(int i=0; i<queryTerms.length;i++){
+					//assignScores(i, (AccumulatorResultSet) resultSet, plm.getPosting(i));
+					AccumulatorResultSet rs = (AccumulatorResultSet) resultSet;
+					int docid;
+					double score;
+					String w = queryTerms[i];
+					
+					if(stopwords.contains(w.toLowerCase())) {
+						//System.err.println("Source Term exist in stop words : " + w);
+						continue;
+					}
+					
+					HashMap<String, Double> top_translations_of_w = getTopW2VTranslations(w);
+
+					for(String u : top_translations_of_w.keySet()) {
+						String uPipelined = tpa.pipelineTerm(u);
+						if(uPipelined==null) {
+							System.err.println("Translated Term delected after pipeline: "+u);
+							continue;
+						}
+						LexiconEntry lEntry = index.getLexicon().getLexiconEntry(uPipelined);
+						if (lEntry==null)
+						{
+							System.err.println("Term Not Found: "+uPipelined);
+							continue;
+						}
+						IterablePosting postings = index.getInvertedIndex().getPostings(lEntry);
+						while (postings.next() != IterablePosting.EOL) {			
+							model.setCollectionStatistics(this.index.getCollectionStatistics());
+							model.setEntryStatistics(lEntry);
+							model.setKeyFrequency(1);
+							model.setParameter(0.75);
+							model.prepare();
+							score =	model.score(postings);
+							docid = postings.getId();
+							rs.scoresMap.adjustOrPutValue(docid, score, score);
+							rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
+						}
+
+					}
+				}
+
+				resultSet.initialise();
+
+				int numberOfRetrievedDocuments = resultSet.getExactResultSize();
+				if (logger.isDebugEnabled())
+					logger.debug("Time to match "+numberOfRetrievedDocuments+" results: " + (System.currentTimeMillis() - starttime) + "ms");
+
+				//check to see if we have any negative infinity scores that should be removed
+				int badDocuments = 0;
+				for (int i = 0; i < resultSet.getResultSize(); i++) {
+					if (resultSet.getScores()[i] == Double.NEGATIVE_INFINITY)
+						badDocuments++;
+				}
+				logger.debug("Found "+badDocuments+" documents with a score of negative infinity in the result set returned, they will be removed.");
+
+				//now crop the collectionresultset down to a query result set.
+				rq.setResultSet(resultSet.getResultSet(0, resultSet.getResultSize()-badDocuments));
+			} catch (IOException ioe) {
+				logger.error("Problem running Matching, returning empty result set as query"+rq.getQueryID(), ioe);
+				rq.setResultSet(new QueryResultSet(0));
+			}
+		}
+		else
+		{
+			logger.warn("Returning empty result set as query "+rq.getQueryID()+" is empty");
+			rq.setResultSet(new QueryResultSet(0));
+		}
+		
+	
+	}
 
 	public void runMatchingWeCLTLM(SearchRequest srq){
 
+		
 		String filepath = "score.ser";
 		File f = new File(filepath);
 		if(f.exists()) { 
-			/* load the matrix that has been serialised to disk */ 
+			// load the matrix that has been serialised to disk  
 			System.out.println("Loading translations from file");
 			this.readW2VSerialised(f.getAbsolutePath());
 		}
@@ -760,8 +981,8 @@ public class Manager
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-
-
+		
+		
 		/*
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
 		{			
@@ -905,7 +1126,152 @@ public class Manager
 		System.out.println(tcount + " translations selected, for a cumulative sum of " + cumsum);
 		return tmp_w_top_cooccurence;
 	}
+	
+	public HashMap<String, Double> getTopW2VTranslations_atquerytime(String w) {
+		TreeMultimap<Double, String> inverted_translation_w = TreeMultimap.create(Ordering.natural().reverse(), Ordering.natural());
+		HashMap<String, Double> w_top_cooccurence = new HashMap<String, Double>();
+		LexiconEntry lEntry = index.getLexicon().getLexiconEntry(w);
+		
+		/*
+		if(lEntry.getFrequency()<this.rarethreshold || lEntry.getDocumentFrequency()<this.rarethreshold 
+				|| lEntry.getDocumentFrequency()>this.topthreshold || w.matches(".*\\d+.*")) 
+		{
+			System.err.println("No translations recorded for term " + w);
+			w_top_cooccurence.put(w, 1.0);
+			return w_top_cooccurence;
+		}
+		*/
 
+		if(!w2v_inverted_translation.containsKey(w)) {
+			double[] vector_w = fullw2vmatrix.get(w);
+			HashMap<String,Double> tmp_w = new HashMap<String,Double>();
+			double sum_cosines=0.0;
+			for(String u : fullw2vmatrix.keySet()) {
+				double[] vector_u = fullw2vmatrix.get(u);
+				double cosine_w_u=0.0;
+				double sum_w=0.0;
+				double sum_u=0.0;
+				for(int i=0; i<vector_w.length;i++) {
+					cosine_w_u=cosine_w_u + vector_w[i]*vector_u[i];
+					sum_w=sum_w + Math.pow(vector_w[i],2);
+					sum_u=sum_u + Math.pow(vector_u[i],2);
+				}
+				//System.out.println("Un-normalised cosine: " + cosine_w_u);
+				//normalisation step
+				cosine_w_u = cosine_w_u / (Math.sqrt(sum_w) * Math.sqrt(sum_u));
+				//System.out.println("normalised cosine: " + cosine_w_u);
+				tmp_w.put(u, cosine_w_u);
+				sum_cosines = sum_cosines+ cosine_w_u;
+			}
+			//normalise to probabilities and insert in order
+			for(String u: tmp_w.keySet()) {
+				double p_w2v_w_u = tmp_w.get(u)/sum_cosines;
+				inverted_translation_w.put(p_w2v_w_u, u);
+			}
+			w2v_inverted_translation.put(w, inverted_translation_w);
+		}else {
+			inverted_translation_w = w2v_inverted_translation.get(w);
+			System.out.println("Translation already available in memory");
+		}
+
+		System.out.println("\tWord2Vec translations " + w);
+		//TreeMultimap<Double, String> inverted_translation_w = w2v_inverted_translation.get(w);
+
+		if(!w2v_inverted_translation.containsKey(w)) {
+			System.err.println("No translations recorded for term " + w);
+			w_top_cooccurence.put(w, 1.0);
+			return w_top_cooccurence;
+		}
+		System.out.println("\tTranslations for " + w);
+		int count =0;
+
+		double sums_u=0.0;
+		for (Double p_w_u : inverted_translation_w.keySet()) {
+			if(count<this.number_of_top_translation_terms) {
+				NavigableSet<String> terms = inverted_translation_w.get(p_w_u);
+				Iterator<String> termit = terms.iterator();
+				while(termit.hasNext()) {
+					String topterm = termit.next();
+					if(count<this.number_of_top_translation_terms) {
+						w_top_cooccurence.put(topterm, p_w_u);
+						sums_u=sums_u + p_w_u;
+						count ++;
+					}else
+						break;
+				}
+			}else
+				break;
+		}
+
+		//normalised based on u
+		HashMap<String, Double> tmp_w_top_cooccurence = new HashMap<String, Double>();
+		int tcount=0;
+		double cumsum=0.0;
+		for(String u: w_top_cooccurence.keySet()) {
+			tmp_w_top_cooccurence.put(u, w_top_cooccurence.get(u)/sums_u);
+			System.out.println("\t  " + w_top_cooccurence.get(u)/sums_u + ": " + u);
+			cumsum=cumsum+w_top_cooccurence.get(u)/sums_u;
+			tcount++;
+		}
+		System.out.println(tcount + " translations selected, for a cumulative sum of " + cumsum);
+		return tmp_w_top_cooccurence;
+	}
+
+	
+	public void initialiseW2V_atquerytime(String filepath) throws NumberFormatException, IOException {
+		File f = new File(filepath+"_matrix.ser");
+		if(f.exists()) { 
+			/* load the matrix that has been serialised to disk */ 
+			System.out.println("Loading matrix from file");
+			//this.readW2VSerialised(f.getAbsolutePath());
+			//TODO: to replace with appropriate method
+		}else {
+			HashMap<String, double[]> w2vmatrix = new HashMap<String, double[]>();
+			BufferedReader br = new BufferedReader(new FileReader(filepath));
+			String line = null;
+			int count=0;
+			int numberofdimensions=0;
+			int foundterms=0;
+			while ((line = br.readLine()) != null) {
+				if(count==0) {
+					//this is the first line: it says how many words and how many dimensions
+					String[] input = line.split(" ");
+					numberofdimensions = Integer.parseInt(input[1]);
+					count++;
+					continue;
+				}
+				
+				
+				String[] input = line.split(" ");
+				String term = input[0];
+				LexiconEntry lEntry = index.getLexicon().getLexiconEntry(term);
+				//screen the term for out of vacabulary and not in the threshold range
+				if (lEntry==null)
+				{
+					//System.err.println("W2V Term Not Found: "+term);
+					continue;
+				}
+				//if(lEntry.getFrequency()<this.rarethreshold || lEntry.getDocumentFrequency()<this.rarethreshold 
+				//		|| lEntry.getDocumentFrequency()>this.topthreshold || term.matches(".*\\d+.*"))
+				//	continue;
+				
+				foundterms++;
+				int dimension=0;
+				double[] vector = new double[numberofdimensions];
+				for(int i=1; i<input.length;i++) {
+					vector[dimension] = Double.parseDouble(input[i]);
+					dimension++;
+				}
+				w2vmatrix.put(term, vector);
+				count++;
+			}
+			System.out.println("Terms founds in word2vec: " + foundterms);
+			br.close();
+			this.fullw2vmatrix = w2vmatrix;
+			
+		}
+		System.out.println("Initialisation of word2vec finished");
+	}
 
 
 

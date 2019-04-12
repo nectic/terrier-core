@@ -42,9 +42,12 @@ import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.NavigableSet;
 import java.util.Random;
 import java.util.Set;
 
@@ -63,6 +66,8 @@ import org.terrier.structures.cache.QueryResultCache;
 import org.terrier.structures.outputformat.OutputFormat;
 import org.terrier.structures.outputformat.RawOutputFormat;
 import org.terrier.structures.outputformat.TRECDocnoOutputFormat;
+import org.terrier.terms.BaseTermPipelineAccessor;
+import org.terrier.terms.TermPipelineAccessor;
 import org.terrier.structures.outputformat.TRECDocidOutputFormat;
 import org.terrier.structures.outputformat.NullOutputFormat;
 import org.terrier.utility.ApplicationSetup;
@@ -266,8 +271,12 @@ public class TRECQuerying {
 
 	// my custom
 
-	public HashMap<String, TreeMultimap<Double, String> > w2v_inverted_translation = new HashMap<String, TreeMultimap<Double, String> >();
-
+	protected HashMap<String, TreeMultimap<Double, String> > w2v_inverted_translation = new HashMap<String, TreeMultimap<Double, String> >();
+	HashMap<String, double[]> fullw2vmatrix = new HashMap<String, double[]>();
+	protected int number_of_top_translation_terms=10; //default value
+	protected TermPipelineAccessor tpa;
+	protected HashMap<String, double[]> w2vmatrixSrc = new HashMap<String, double[]>();
+	protected HashMap<String, double[]> w2vmatrixTrg = new HashMap<String, double[]>();
 
 	/**
 	 * TRECQuerying default constructor initialises the inverted index, the
@@ -588,31 +597,41 @@ public class TRECQuerying {
 		return processQuery(queryId, query, cParameter, true);
 	}
 
+	private void serializeSrcWe(String srcWE) throws NumberFormatException, IOException {
 
-	public void initScore(String srcWE, String trgWE) throws NumberFormatException, IOException {
-		System.out.println("initScore....");
+		System.out.println("serializeSrcWe...");
 
-		String filepath = "score.ser";
-
-		File f = new File(filepath);
-		if(f.exists()) { 
-			/* load the matrix that has been serialised to disk */ 
-			System.out.println("Translations file already exists");
-			//this.readW2VSerialised(f.getAbsolutePath());
+		load_pipeline();
+		// iterating through the queries
+		List<String> queryTermsPipelined = new ArrayList<String>();
+		while (querySource.hasNext()){
+			String query = querySource.next();
+			String[] queryTerms = query.toString().split(" ");
+			for(int i=0; i<queryTerms.length;i++){
+				String w = queryTerms[i];
+				String wPipelined = tpa.pipelineTerm(queryTerms[i]);
+				if(wPipelined==null) {
+					//System.err.println("Term delected after pipeline: "+w);
+					continue;
+				}
+				queryTermsPipelined.add(w);
+			}
 		}
 
-		else {
-
+		File srcWeFile = new File(srcWE+".ser");
+		if(srcWeFile.exists()){
+			// load the matrix that has been serialised to disk  
+			System.out.println("Translations file already exists");
+			//this.readW2VSerialised(f.getAbsolutePath());
+		} else {
 			System.out.println("Translations file not exist ");
-
-			HashMap<String, double[]> w2vmatrix = new HashMap<String, double[]>();
+			w2vmatrixSrc = new HashMap<String, double[]>();
 			BufferedReader br = new BufferedReader(new FileReader(srcWE));
 			String line = null;
 			int count=0;
 			int numberofdimensions=0;
 			int foundterms=0;
 			while ((line = br.readLine()) != null) {
-
 				if(count==0) {
 					//this is the first line: it says how many words and how many dimensions
 					String[] input = line.split(" ");
@@ -620,22 +639,24 @@ public class TRECQuerying {
 					count++;
 					continue;
 				}
-
-
 				String[] input = line.split(" ");
 				String term = input[0];
-				LexiconEntry lEntry = index.getLexicon().getLexiconEntry(term);
+
+				if(w2vmatrixSrc.containsKey(term)) {
+					System.err.println("Term already exists in w2vmatrixSrc : "+term);
+					continue;
+				}
+
+				//LexiconEntry lEntry = index.getLexicon().getLexiconEntry(term);
 				//screen the term for out of vacabulary and not in the threshold range
-				if (lEntry==null)
+				if (!queryTermsPipelined.contains(term))
 				{
 					//System.err.println("W2V Term Not Found: "+term);
 					continue;
 				}
-
 				//if(lEntry.getFrequency()<this.rarethreshold || lEntry.getDocumentFrequency()<this.rarethreshold 
 				//		|| lEntry.getDocumentFrequency()>this.topthreshold || term.matches(".*\\d+.*"))
 				//	continue;
-
 				foundterms++;
 				int dimension=0;
 				double[] vector = new double[numberofdimensions];
@@ -643,20 +664,193 @@ public class TRECQuerying {
 					vector[dimension] = Double.parseDouble(input[i]);
 					dimension++;
 				}
-				w2vmatrix.put(term, vector);
+				w2vmatrixSrc.put(term, vector);
 				count++;
 			}
-			System.out.println("Terms founds in word2vec: " + foundterms);
+			System.out.println("Terms founds in src word2vec: " + foundterms);
 			br.close();
 
+		}
+	}
+	
+	private void serializeSrcWeCl(String srcWE) throws NumberFormatException, IOException {
+
+		System.out.println("serializeSrcWe...");
+		
+		File stopWordsFile = new File("share/stopwords-fr.txt"); 
+		BufferedReader brStopWordsFile = new BufferedReader(new FileReader(stopWordsFile)); 
+		List<String> stopwords = new ArrayList<String>();		
+		String st; 
+		while ((st = brStopWordsFile.readLine()) != null) {
+			stopwords.add(st);
+		}
+		brStopWordsFile.close();
+		
+		// iterating through the queries
+		List<String> queryTermsPipelined = new ArrayList<String>();
+		while (querySource.hasNext()){
+			String query = querySource.next();
+			String[] queryTerms = query.toString().split(" ");
+			for(int i=0; i<queryTerms.length;i++){
+				String w = queryTerms[i];
+				
+				if(stopwords.contains(w.toLowerCase())) {
+					//System.err.println("Source Term exist in stop words : " + w);
+					continue;
+				}
+				
+				queryTermsPipelined.add(w);
+			}
+		}
+
+		File srcWeFile = new File(srcWE+".ser");
+		if(srcWeFile.exists()){
+			// load the matrix that has been serialised to disk  
+			System.out.println("Translations file already exists");
+			//this.readW2VSerialised(f.getAbsolutePath());
+		} else {
+			System.out.println("Translations file not exist ");
+			w2vmatrixSrc = new HashMap<String, double[]>();
+			BufferedReader br = new BufferedReader(new FileReader(srcWE));
+			String line = null;
+			int count=0;
+			int numberofdimensions=0;
+			int foundterms=0;
+			while ((line = br.readLine()) != null) {
+				if(count==0) {
+					//this is the first line: it says how many words and how many dimensions
+					String[] input = line.split(" ");
+					numberofdimensions = Integer.parseInt(input[1]);
+					count++;
+					continue;
+				}
+				String[] input = line.split(" ");
+				String term = input[0];
+
+				if(w2vmatrixSrc.containsKey(term)) {
+					System.err.println("Term already exists in w2vmatrixSrc : "+term);
+					continue;
+				}
+
+				if (!queryTermsPipelined.contains(term))
+				{
+					//System.err.println("W2V Term Not Found: "+term);
+					continue;
+				}
+	
+				foundterms++;
+				int dimension=0;
+				double[] vector = new double[numberofdimensions];
+				for(int i=1; i<input.length;i++) {
+					vector[dimension] = Double.parseDouble(input[i]);
+					dimension++;
+				}
+				w2vmatrixSrc.put(term, vector);
+				count++;
+			}
+			System.out.println("Terms founds in src word2vec: " + foundterms);
+			br.close();
+
+		}
+	}
+
+	private void serializeTrgWe(String trgWE) throws NumberFormatException, IOException {
+
+		System.out.println("serializeTrgWe...");
+		
+		load_pipeline();
+
+		File f = new File(trgWE+".ser");
+		if(f.exists()) { 
+			// load the matrix that has been serialised to disk  
+			System.out.println("Translations file already exists");
+			//this.readW2VSerialised(f.getAbsolutePath());
+		} else {
+			System.out.println("Translations file not exist ");
+			w2vmatrixTrg = new HashMap<String, double[]>();
+			BufferedReader br = new BufferedReader(new FileReader(trgWE));
+			String line = null;
+			int count=0;
+			int numberofdimensions=0;
+			int foundterms=0;
+			while ((line = br.readLine()) != null) {
+				if(count==0) {
+					//this is the first line: it says how many words and how many dimensions
+					String[] input = line.split(" ");
+					numberofdimensions = Integer.parseInt(input[1]);
+					count++;
+					continue;
+				}
+				String[] input = line.split(" ");
+				String term = input[0];
+
+				if(w2vmatrixTrg.containsKey(term)) {
+					System.err.println("Term already exists in w2vmatrixTrg : "+term);
+					continue;
+				}
+				
+				String termPipelined = tpa.pipelineTerm(term);
+				if(termPipelined==null) {
+					//System.err.println("Term delected after pipeline: "+term);
+					continue;
+				}
+
+				LexiconEntry lEntry = index.getLexicon().getLexiconEntry(termPipelined);
+				//screen the term for out of vacabulary and not in the threshold range
+				if (lEntry==null)
+				{
+					//System.err.println("W2V Term Not Found: "+term);
+					continue;
+				}
+				//if(lEntry.getFrequency()<this.rarethreshold || lEntry.getDocumentFrequency()<this.rarethreshold 
+				//		|| lEntry.getDocumentFrequency()>this.topthreshold || term.matches(".*\\d+.*"))
+				//	continue;
+				foundterms++;
+				int dimension=0;
+				double[] vector = new double[numberofdimensions];
+				for(int i=1; i<input.length;i++) {
+					vector[dimension] = Double.parseDouble(input[i]);
+					dimension++;
+				}
+				w2vmatrixTrg.put(term, vector);
+				count++;
+			}
+			System.out.println("Terms founds in trg word2vec: " + foundterms);
+			br.close();
+
+		}
+	}
+
+
+	public void initScore(String srcWE, String trgWE) throws NumberFormatException, IOException {
+		System.out.println("initScore....");
+		//initialiseW2V_atquerytime(srcWE);
+		//String w = "design";
+		//getTopW2VTranslations_atquerytime(w);
+		String scoreFilepath = "score.ser";
+		File scoreFile = new File(scoreFilepath);
+
+		if(scoreFile.exists()){
+			
+			System.out.println("Translations file already exists");
+
+		}else{
+			
+			System.out.println("Translations file not exist ");
+
+			//serializeSrcWe(srcWE);
+			serializeSrcWeCl(srcWE);
+			serializeTrgWe(trgWE);
+			
+
 			//HashMap<String, TreeMultimap<Double, String> > inverted_translation = new HashMap<String, TreeMultimap<Double, String> >();
-			for(String w : w2vmatrix.keySet()) {
-				double[] vector_w = w2vmatrix.get(w);
+			for(String w : w2vmatrixSrc.keySet()) {
+				double[] vector_w = w2vmatrixSrc.get(w);
 				TreeMultimap<Double, String> inverted_translation_w = TreeMultimap.create(Ordering.natural().reverse(), Ordering.natural());
 				HashMap<String,Double> tmp_w = new HashMap<String,Double>();
 				double sum_cosines=0.0;
-				for(String u : w2vmatrix.keySet()) {
-					double[] vector_u = w2vmatrix.get(u);
+				for(String u : w2vmatrixTrg.keySet()) {
+					double[] vector_u = w2vmatrixTrg.get(u);
 					double cosine_w_u=0.0;
 					double sum_w=0.0;
 					double sum_u=0.0;
@@ -679,16 +873,284 @@ public class TRECQuerying {
 				}
 				w2v_inverted_translation.put(w, inverted_translation_w);
 			}
-			this.writemap(f.getAbsolutePath());
+			this.writemap(scoreFile.getAbsolutePath());
+
+			System.out.println("Initialisation of word2vec finished");
 		}
-		System.out.println("Initialisation of word2vec finished");
-
-
 
 	}
 
 
+	/** load in the term pipeline */
+	protected void load_pipeline()
+	{
+		final String[] pipes = ApplicationSetup.getProperty(
+				"termpipelines", "Stopwords,PorterStemmer").trim()
+				.split("\\s*,\\s*");
+		synchronized (this) {
+			tpa = new BaseTermPipelineAccessor(pipes);
+		}		
+	}
 
+
+	public void initScore2(String srcWE, String trgWE) throws NumberFormatException, IOException {
+
+		System.out.println("initScore....");
+		serializeSrcWe(srcWE);
+		serializeTrgWe(trgWE);
+
+
+		/*
+		load_pipeline();
+		// iterating through the queries
+		while (querySource.hasNext()) {
+			String query = querySource.next();
+			String[] queryTerms = query.toString().split(" ");
+
+			for(int i=0; i<queryTerms.length;i++){
+				String w = queryTerms[i];
+				String wPipelined = tpa.pipelineTerm(queryTerms[i]);
+				if(wPipelined==null) {
+					System.err.println("Term delected after pipeline: "+w);
+					continue;
+				}
+
+			}
+		}
+
+		 */
+
+
+
+		/*
+		String filepath = "score.ser";
+		File f = new File(filepath);
+		if(f.exists()) { 
+			// load the matrix that has been serialised to disk  
+			System.out.println("Translations file already exists");
+			//this.readW2VSerialised(f.getAbsolutePath());
+		} else {
+			System.out.println("Translations file not exist ");
+			HashMap<String, double[]> w2vmatrix = new HashMap<String, double[]>();
+			BufferedReader br = new BufferedReader(new FileReader(srcWE));
+			String line = null;
+			int count=0;
+			int numberofdimensions=0;
+			int foundterms=0;
+			while ((line = br.readLine()) != null) {
+				if(count==0) {
+					//this is the first line: it says how many words and how many dimensions
+					String[] input = line.split(" ");
+					numberofdimensions = Integer.parseInt(input[1]);
+					count++;
+					continue;
+				}
+				String[] input = line.split(" ");
+				String term = input[0];
+				LexiconEntry lEntry = index.getLexicon().getLexiconEntry(term);
+				//screen the term for out of vacabulary and not in the threshold range
+				if (lEntry==null)
+				{
+					//System.err.println("W2V Term Not Found: "+term);
+					continue;
+				}
+				foundterms++;
+				int dimension=0;
+				double[] vector = new double[numberofdimensions];
+				for(int i=1; i<input.length;i++) {
+					vector[dimension] = Double.parseDouble(input[i]);
+					dimension++;
+				}
+				w2vmatrix.put(term, vector);
+				count++;
+			}
+			System.out.println("Terms founds in word2vec: " + foundterms);
+			br.close();
+
+			for(String w : w2vmatrix.keySet()) {
+				double[] vector_w = w2vmatrix.get(w);
+				TreeMultimap<Double, String> inverted_translation_w = TreeMultimap.create(Ordering.natural().reverse(), Ordering.natural());
+				HashMap<String,Double> tmp_w = new HashMap<String,Double>();
+				double sum_cosines=0.0;
+				for(String u : w2vmatrix.keySet()) {
+					double[] vector_u = w2vmatrix.get(u);
+					double cosine_w_u=0.0;
+					double sum_w=0.0;
+					double sum_u=0.0;
+					for(int i=0; i<vector_w.length;i++) {
+						cosine_w_u=cosine_w_u + vector_w[i]*vector_u[i];
+						sum_w=sum_w + Math.pow(vector_w[i],2);
+						sum_u=sum_u + Math.pow(vector_u[i],2);
+					}
+
+					//normalisation step
+					cosine_w_u = cosine_w_u / (Math.sqrt(sum_w) * Math.sqrt(sum_u));
+					//System.out.println("normalised cosine: " + cosine_w_u);
+					tmp_w.put(u, cosine_w_u);
+					sum_cosines = sum_cosines+ cosine_w_u;
+				}
+				//normalise to probabilities and insert in order
+				for(String u: tmp_w.keySet()) {
+					double p_w2v_w_u = tmp_w.get(u)/sum_cosines;
+					inverted_translation_w.put(p_w2v_w_u, u);
+				}
+				w2v_inverted_translation.put(w, inverted_translation_w);
+			}
+			this.writemap(f.getAbsolutePath());
+		}
+
+		System.out.println("Initialisation of word2vec finished");
+
+		 */
+
+	}
+
+
+	public HashMap<String, Double> getTopW2VTranslations_atquerytime(String w) {
+		TreeMultimap<Double, String> inverted_translation_w = TreeMultimap.create(Ordering.natural().reverse(), Ordering.natural());
+		HashMap<String, Double> w_top_cooccurence = new HashMap<String, Double>();
+		LexiconEntry lEntry = index.getLexicon().getLexiconEntry(w);
+
+		/*
+		if(lEntry.getFrequency()<this.rarethreshold || lEntry.getDocumentFrequency()<this.rarethreshold 
+				|| lEntry.getDocumentFrequency()>this.topthreshold || w.matches(".*\\d+.*")) 
+		{
+			System.err.println("No translations recorded for term " + w);
+			w_top_cooccurence.put(w, 1.0);
+			return w_top_cooccurence;
+		}
+		 */
+
+		if(!w2v_inverted_translation.containsKey(w)) {
+			double[] vector_w = fullw2vmatrix.get(w);
+			HashMap<String,Double> tmp_w = new HashMap<String,Double>();
+			double sum_cosines=0.0;
+			for(String u : fullw2vmatrix.keySet()) {
+				double[] vector_u = fullw2vmatrix.get(u);
+				double cosine_w_u=0.0;
+				double sum_w=0.0;
+				double sum_u=0.0;
+				for(int i=0; i<vector_w.length;i++) {
+					cosine_w_u=cosine_w_u + vector_w[i]*vector_u[i];
+					sum_w=sum_w + Math.pow(vector_w[i],2);
+					sum_u=sum_u + Math.pow(vector_u[i],2);
+				}
+				//System.out.println("Un-normalised cosine: " + cosine_w_u);
+				//normalisation step
+				cosine_w_u = cosine_w_u / (Math.sqrt(sum_w) * Math.sqrt(sum_u));
+				//System.out.println("normalised cosine: " + cosine_w_u);
+				tmp_w.put(u, cosine_w_u);
+				sum_cosines = sum_cosines+ cosine_w_u;
+			}
+			//normalise to probabilities and insert in order
+			for(String u: tmp_w.keySet()) {
+				double p_w2v_w_u = tmp_w.get(u)/sum_cosines;
+				inverted_translation_w.put(p_w2v_w_u, u);
+			}
+			w2v_inverted_translation.put(w, inverted_translation_w);
+		}else {
+			inverted_translation_w = w2v_inverted_translation.get(w);
+			System.out.println("Translation already available in memory");
+		}
+
+		System.out.println("\tWord2Vec translations " + w);
+		//TreeMultimap<Double, String> inverted_translation_w = w2v_inverted_translation.get(w);
+
+		if(!w2v_inverted_translation.containsKey(w)) {
+			System.err.println("No translations recorded for term " + w);
+			w_top_cooccurence.put(w, 1.0);
+			return w_top_cooccurence;
+		}
+		System.out.println("\tTranslations for " + w);
+		int count =0;
+
+		double sums_u=0.0;
+		for (Double p_w_u : inverted_translation_w.keySet()) {
+			if(count<this.number_of_top_translation_terms) {
+				NavigableSet<String> terms = inverted_translation_w.get(p_w_u);
+				Iterator<String> termit = terms.iterator();
+				while(termit.hasNext()) {
+					String topterm = termit.next();
+					if(count<this.number_of_top_translation_terms) {
+						w_top_cooccurence.put(topterm, p_w_u);
+						sums_u=sums_u + p_w_u;
+						count ++;
+					}else
+						break;
+				}
+			}else
+				break;
+		}
+
+		//normalised based on u
+		HashMap<String, Double> tmp_w_top_cooccurence = new HashMap<String, Double>();
+		int tcount=0;
+		double cumsum=0.0;
+		for(String u: w_top_cooccurence.keySet()) {
+			tmp_w_top_cooccurence.put(u, w_top_cooccurence.get(u)/sums_u);
+			System.out.println("\t  " + w_top_cooccurence.get(u)/sums_u + ": " + u);
+			cumsum=cumsum+w_top_cooccurence.get(u)/sums_u;
+			tcount++;
+		}
+		System.out.println(tcount + " translations selected, for a cumulative sum of " + cumsum);
+		return tmp_w_top_cooccurence;
+	}
+
+
+	public void initialiseW2V_atquerytime(String filepath) throws NumberFormatException, IOException {
+		File f = new File(filepath+"_matrix.ser");
+		if(f.exists()) { 
+			/* load the matrix that has been serialised to disk */ 
+			System.out.println("Loading matrix from file");
+			//this.readW2VSerialised(f.getAbsolutePath());
+			//TODO: to replace with appropriate method
+		}else {
+			HashMap<String, double[]> w2vmatrix = new HashMap<String, double[]>();
+			BufferedReader br = new BufferedReader(new FileReader(filepath));
+			String line = null;
+			int count=0;
+			int numberofdimensions=0;
+			int foundterms=0;
+			while ((line = br.readLine()) != null) {
+				if(count==0) {
+					//this is the first line: it says how many words and how many dimensions
+					String[] input = line.split(" ");
+					numberofdimensions = Integer.parseInt(input[1]);
+					count++;
+					continue;
+				}
+
+
+				String[] input = line.split(" ");
+				String term = input[0];
+				LexiconEntry lEntry = index.getLexicon().getLexiconEntry(term);
+				//screen the term for out of vacabulary and not in the threshold range
+				if (lEntry==null)
+				{
+					//System.err.println("W2V Term Not Found: "+term);
+					continue;
+				}
+				//if(lEntry.getFrequency()<this.rarethreshold || lEntry.getDocumentFrequency()<this.rarethreshold 
+				//		|| lEntry.getDocumentFrequency()>this.topthreshold || term.matches(".*\\d+.*"))
+				//	continue;
+
+				foundterms++;
+				int dimension=0;
+				double[] vector = new double[numberofdimensions];
+				for(int i=1; i<input.length;i++) {
+					vector[dimension] = Double.parseDouble(input[i]);
+					dimension++;
+				}
+				w2vmatrix.put(term, vector);
+				count++;
+			}
+			System.out.println("Terms founds in word2vec: " + foundterms);
+			br.close();
+			this.fullw2vmatrix = w2vmatrix;
+
+		}
+		System.out.println("Initialisation of word2vec finished");
+	}
 
 	/*
 
@@ -866,9 +1328,11 @@ public class TRECQuerying {
 		if (logger.isInfoEnabled())
 			logger.info("Processing query: " + queryId + ": '" + query + "'");
 		matchingCount++;
-		queryingManager.runPreProcessing(srq);
+		//queryingManager.runPreProcessing(srq);
+		//queryingManager.runPreProcessingTLM(srq);
 		//queryingManager.runMatching(srq);
-		queryingManager.runMatchingWeCLTLM(srq);
+		queryingManager.runMatchingWeMonoTLM(srq);
+		//queryingManager.runMatchingWeCLTLM(srq);
 		queryingManager.runPostProcessing(srq);
 		queryingManager.runPostFilters(srq);
 		resultsCache.add(srq);
@@ -975,9 +1439,7 @@ public class TRECQuerying {
 		while (querySource.hasNext()) {
 			String query = querySource.next();
 			String qid = querySource.getQueryId();
-
-			//qid = qid.substring(1,qid.length());
-
+			qid = qid.substring(1,qid.length());
 			// process the query
 			long processingStart = System.currentTimeMillis();
 			processQueryAndWrite(qid, query, c, c_set);
