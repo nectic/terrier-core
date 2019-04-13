@@ -821,7 +821,6 @@ public class TRECQuerying {
 		}
 	}
 
-
 	public void initScore(String srcWE, String trgWE) throws NumberFormatException, IOException {
 		System.out.println("initScore....");
 		//initialiseW2V_atquerytime(srcWE);
