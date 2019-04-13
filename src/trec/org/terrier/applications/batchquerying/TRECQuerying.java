@@ -827,7 +827,7 @@ public class TRECQuerying {
 		//initialiseW2V_atquerytime(srcWE);
 		//String w = "design";
 		//getTopW2VTranslations_atquerytime(w);
-		String scoreFilepath = "score.ser";
+		String scoreFilepath =  ApplicationSetup.getProperty("clir.score.file","");
 		File scoreFile = new File(scoreFilepath);
 
 		if(scoreFile.exists()){

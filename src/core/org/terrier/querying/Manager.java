@@ -258,7 +258,7 @@ public class Manager
 	
 	protected void load_w2v_inverted_translation() {
 		System.out.println("load_w2v_inverted_translation...");
-		String filepath = "score.ser";
+		String filepath = ApplicationSetup.getProperty("clir.score.file","");
 		File f = new File(filepath);
 		if(f.exists()) { 
 			// load the matrix that has been serialised to disk  
