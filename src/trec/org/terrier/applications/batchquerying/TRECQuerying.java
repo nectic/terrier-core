@@ -231,6 +231,9 @@ public class TRECQuerying {
 	 */
 	protected String mModel = ApplicationSetup.getProperty("trec.matching",
 			"Matching");
+	
+	protected String clirMethod = ApplicationSetup.getProperty("clir.method",
+			"WeMono");
 
 	/** The object that encapsulates the data structures used by Terrier. */
 	protected Index index;
@@ -837,11 +840,13 @@ public class TRECQuerying {
 			
 			System.out.println("Translations file not exist ");
 
-			//serializeSrcWe(srcWE);
-			serializeSrcWeCl(srcWE);
+			if(srcWE.equals(trgWE))
+				serializeSrcWe(srcWE);
+			else
+				serializeSrcWeCl(srcWE);
+			
 			serializeTrgWe(trgWE);
 			
-
 			//HashMap<String, TreeMultimap<Double, String> > inverted_translation = new HashMap<String, TreeMultimap<Double, String> >();
 			for(String w : w2vmatrixSrc.keySet()) {
 				double[] vector_w = w2vmatrixSrc.get(w);
@@ -1327,11 +1332,32 @@ public class TRECQuerying {
 		if (logger.isInfoEnabled())
 			logger.info("Processing query: " + queryId + ": '" + query + "'");
 		matchingCount++;
+		
 		//queryingManager.runPreProcessing(srq);
 		//queryingManager.runPreProcessingTLM(srq);
 		//queryingManager.runMatching(srq);
-		queryingManager.runMatchingWeMonoTLM(srq);
-		//queryingManager.runMatchingWeCLTLM(srq);
+		
+		if(clirMethod.toLowerCase().equals("mono")) {
+			queryingManager.runMatchingMono(srq);
+		}
+		
+		
+		if(clirMethod.toLowerCase().equals("wemono")) {
+			queryingManager.runMatchingWeMono(srq);
+		}
+		
+		if(clirMethod.toLowerCase().equals("wemonotlm")) {
+			
+		}
+		
+		if(clirMethod.toLowerCase().equals("weclir")) {
+			queryingManager.runMatchingWeCLIR(srq);
+		}
+		
+		if(clirMethod.toLowerCase().equals("wecltlm")) {
+			queryingManager.runMatchingWeCLIRTLM(srq);
+		}
+		
 		queryingManager.runPostProcessing(srq);
 		queryingManager.runPostFilters(srq);
 		resultsCache.add(srq);

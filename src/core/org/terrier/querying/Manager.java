@@ -189,8 +189,8 @@ public class Manager
 	public HashMap<String, TreeMultimap<Double, String> > w2v_inverted_translation = new HashMap<String, TreeMultimap<Double, String> >();
 	HashMap<String, double[]> fullw2vmatrix = new HashMap<String, double[]>();
 	public int number_of_top_translation_terms = Integer.valueOf(ApplicationSetup.getProperty("clir.number_of_top_translation_terms", ""));
-	
-	
+
+
 
 	/** Default constructor. Use the default index
 	 * @since 2.0 */
@@ -215,7 +215,7 @@ public class Manager
 		this.load_postprocess_controls();
 		this.load_postfilters_controls();
 		//my custom
-		this.load_w2v_inverted_translation();
+		//this.load_w2v_inverted_translation();
 	}
 	/* ----------------------- Initialisation methods --------------------------*/
 
@@ -256,7 +256,7 @@ public class Manager
 		//String def_c = null;
 		Defaults_Size = Default_Controls.size();
 	}
-	
+
 	protected void load_w2v_inverted_translation() {
 		System.out.println("load_w2v_inverted_translation...");
 		String filepath = ApplicationSetup.getProperty("clir.score.file","");
@@ -653,15 +653,15 @@ public class Manager
 		query.obtainQueryTerms(queryTerms);
 		rq.setMatchingQueryTerms(queryTerms);
 	}
-	
-	
+
+
 	public void runPreProcessingTLM(SearchRequest srq) {
-		
-		
-		
+
+
+
 	}
-	
-	
+
+
 	/** Runs the weighting and matching stage - this the main entry
 	 * into the rest of the Terrier framework.
 	 * @param srq the current SearchRequest object.
@@ -767,9 +767,8 @@ public class Manager
 			rq.setResultSet(new QueryResultSet(0));
 		}
 	}
-	
-	
-	public void runMatchingWeMonoTLM(SearchRequest srq){
+
+	public void runMatchingMono(SearchRequest srq){
 		Request rq = (Request)srq;
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
 		{			
@@ -782,7 +781,92 @@ public class Manager
 			WeightingModel model = (WeightingModel)wmodel;
 
 			try{
-				
+
+				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
+				String[] queryTerms = rq.getQuery().toString().split(" ");
+				final long starttime = System.currentTimeMillis();		
+
+				for(int i=0; i<queryTerms.length;i++){
+					//assignScores(i, (AccumulatorResultSet) resultSet, plm.getPosting(i));
+					AccumulatorResultSet rs = (AccumulatorResultSet) resultSet;
+					int docid;
+					double score;
+					String w = queryTerms[i];
+
+					String wPipelined = tpa.pipelineTerm(queryTerms[i]);
+					if(wPipelined==null) {
+						System.err.println("Term delected after pipeline: "+w);
+						continue;
+					}
+
+
+					LexiconEntry lEntry = index.getLexicon().getLexiconEntry(wPipelined);
+					if (lEntry==null)
+					{
+						System.err.println("Term Not Found: "+wPipelined);
+						continue;
+					}
+					IterablePosting postings = index.getInvertedIndex().getPostings(lEntry);
+					while (postings.next() != IterablePosting.EOL) {			
+						model.setCollectionStatistics(this.index.getCollectionStatistics());
+						model.setEntryStatistics(lEntry);
+						model.setKeyFrequency(1);
+						//model.setParameter(0.75);
+						model.prepare();
+						score =	model.score(postings);
+						docid = postings.getId();
+						rs.scoresMap.adjustOrPutValue(docid, score, score);
+						rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
+					}
+
+				}
+
+				resultSet.initialise();
+
+				int numberOfRetrievedDocuments = resultSet.getExactResultSize();
+				if (logger.isDebugEnabled())
+					logger.debug("Time to match "+numberOfRetrievedDocuments+" results: " + (System.currentTimeMillis() - starttime) + "ms");
+
+				//check to see if we have any negative infinity scores that should be removed
+				int badDocuments = 0;
+				for (int i = 0; i < resultSet.getResultSize(); i++) {
+					if (resultSet.getScores()[i] == Double.NEGATIVE_INFINITY)
+						badDocuments++;
+				}
+				logger.debug("Found "+badDocuments+" documents with a score of negative infinity in the result set returned, they will be removed.");
+
+				//now crop the collectionresultset down to a query result set.
+				rq.setResultSet(resultSet.getResultSet(0, resultSet.getResultSize()-badDocuments));
+			} catch (IOException ioe) {
+				logger.error("Problem running Matching, returning empty result set as query"+rq.getQueryID(), ioe);
+				rq.setResultSet(new QueryResultSet(0));
+			}
+		}
+		else
+		{
+			logger.warn("Returning empty result set as query "+rq.getQueryID()+" is empty");
+			rq.setResultSet(new QueryResultSet(0));
+		}
+
+
+	}
+	public void runMatchingWeMono(SearchRequest srq){
+		Request rq = (Request)srq;
+		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
+		{
+
+			this.load_w2v_inverted_translation();
+
+			Model wmodel = getWeightingModel(rq);
+			if (rq.getControl("c_set").equals("true"))
+			{
+				wmodel.setParameter(Double.parseDouble(rq.getControl("c")));
+			}
+
+			WeightingModel model = (WeightingModel)wmodel;
+
+			try{
+
 				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
 				String[] queryTerms = rq.getQuery().toString().split(" ");
 				final long starttime = System.currentTimeMillis();		
@@ -818,7 +902,7 @@ public class Manager
 							model.setCollectionStatistics(this.index.getCollectionStatistics());
 							model.setEntryStatistics(lEntry);
 							model.setKeyFrequency(1);
-							model.setParameter(0.75);
+							//model.setParameter(0.75);
 							model.prepare();
 							score =	model.score(postings);
 							docid = postings.getId();
@@ -855,11 +939,11 @@ public class Manager
 			logger.warn("Returning empty result set as query "+rq.getQueryID()+" is empty");
 			rq.setResultSet(new QueryResultSet(0));
 		}
-		
-	
+
+
 	}
-	
-	public void runMatchingWeCL(SearchRequest srq){
+
+	public void runMatchingWeCLIR(SearchRequest srq){
 		Request rq = (Request)srq;
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
 		{			
@@ -870,14 +954,14 @@ public class Manager
 			}
 
 			WeightingModel model = (WeightingModel)wmodel;
-			
-			
+
+
 			try{
-				
+
 				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
 				String[] queryTerms = rq.getQuery().toString().split(" ");
 				final long starttime = System.currentTimeMillis();
-				
+
 				File stopWordsFile = new File("share/stopwords-fr.txt"); 
 				BufferedReader brStopWordsFile = new BufferedReader(new FileReader(stopWordsFile)); 
 				List<String> stopwords = new ArrayList<String>();		
@@ -886,7 +970,7 @@ public class Manager
 					stopwords.add(st);
 				}
 				brStopWordsFile.close();
-				
+
 
 				for(int i=0; i<queryTerms.length;i++){
 					//assignScores(i, (AccumulatorResultSet) resultSet, plm.getPosting(i));
@@ -894,12 +978,12 @@ public class Manager
 					int docid;
 					double score;
 					String w = queryTerms[i];
-					
+
 					if(stopwords.contains(w.toLowerCase())) {
 						//System.err.println("Source Term exist in stop words : " + w);
 						continue;
 					}
-					
+
 					HashMap<String, Double> top_translations_of_w = getTopW2VTranslations(w);
 
 					for(String u : top_translations_of_w.keySet()) {
@@ -919,7 +1003,7 @@ public class Manager
 							model.setCollectionStatistics(this.index.getCollectionStatistics());
 							model.setEntryStatistics(lEntry);
 							model.setKeyFrequency(1);
-							model.setParameter(0.75);
+							//model.setParameter(0.75);
 							model.prepare();
 							score =	model.score(postings);
 							docid = postings.getId();
@@ -956,34 +1040,13 @@ public class Manager
 			logger.warn("Returning empty result set as query "+rq.getQueryID()+" is empty");
 			rq.setResultSet(new QueryResultSet(0));
 		}
-		
-	
+
+
 	}
 
-	public void runMatchingWeCLTLM(SearchRequest srq){
+	public void runMatchingWeCLIRTLM(SearchRequest srq){
 
-		
-		String filepath = "score.ser";
-		File f = new File(filepath);
-		if(f.exists()) { 
-			// load the matrix that has been serialised to disk  
-			System.out.println("Loading translations from file");
-			this.readW2VSerialised(f.getAbsolutePath());
-		}
 
-		try {
-
-			String w = "design";
-			HashMap<String, Double> top_translations_of_w;
-			top_translations_of_w = getTopW2VTranslations(w);
-			System.out.println("\t" + top_translations_of_w.size() + " Translations for " + w + " acquired");
-			System.out.println("stop....");
-
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-		
-		
 		/*
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
 		{			
@@ -1127,12 +1190,12 @@ public class Manager
 		System.out.println(tcount + " translations selected, for a cumulative sum of " + cumsum);
 		return tmp_w_top_cooccurence;
 	}
-	
+
 	public HashMap<String, Double> getTopW2VTranslations_atquerytime(String w) {
 		TreeMultimap<Double, String> inverted_translation_w = TreeMultimap.create(Ordering.natural().reverse(), Ordering.natural());
 		HashMap<String, Double> w_top_cooccurence = new HashMap<String, Double>();
 		LexiconEntry lEntry = index.getLexicon().getLexiconEntry(w);
-		
+
 		/*
 		if(lEntry.getFrequency()<this.rarethreshold || lEntry.getDocumentFrequency()<this.rarethreshold 
 				|| lEntry.getDocumentFrequency()>this.topthreshold || w.matches(".*\\d+.*")) 
@@ -1141,7 +1204,7 @@ public class Manager
 			w_top_cooccurence.put(w, 1.0);
 			return w_top_cooccurence;
 		}
-		*/
+		 */
 
 		if(!w2v_inverted_translation.containsKey(w)) {
 			double[] vector_w = fullw2vmatrix.get(w);
@@ -1218,7 +1281,7 @@ public class Manager
 		return tmp_w_top_cooccurence;
 	}
 
-	
+
 	public void initialiseW2V_atquerytime(String filepath) throws NumberFormatException, IOException {
 		File f = new File(filepath+"_matrix.ser");
 		if(f.exists()) { 
@@ -1241,8 +1304,8 @@ public class Manager
 					count++;
 					continue;
 				}
-				
-				
+
+
 				String[] input = line.split(" ");
 				String term = input[0];
 				LexiconEntry lEntry = index.getLexicon().getLexiconEntry(term);
@@ -1255,7 +1318,7 @@ public class Manager
 				//if(lEntry.getFrequency()<this.rarethreshold || lEntry.getDocumentFrequency()<this.rarethreshold 
 				//		|| lEntry.getDocumentFrequency()>this.topthreshold || term.matches(".*\\d+.*"))
 				//	continue;
-				
+
 				foundterms++;
 				int dimension=0;
 				double[] vector = new double[numberofdimensions];
@@ -1269,7 +1332,7 @@ public class Manager
 			System.out.println("Terms founds in word2vec: " + foundterms);
 			br.close();
 			this.fullw2vmatrix = w2vmatrix;
-			
+
 		}
 		System.out.println("Initialisation of word2vec finished");
 	}
