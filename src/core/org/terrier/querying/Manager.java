@@ -946,7 +946,10 @@ public class Manager
 	public void runMatchingWeCLIR(SearchRequest srq){
 		Request rq = (Request)srq;
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
-		{			
+		{	
+			
+			this.load_w2v_inverted_translation();
+			
 			Model wmodel = getWeightingModel(rq);
 			if (rq.getControl("c_set").equals("true"))
 			{
