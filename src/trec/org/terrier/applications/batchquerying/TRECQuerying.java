@@ -232,9 +232,7 @@ public class TRECQuerying {
 	protected String mModel = ApplicationSetup.getProperty("trec.matching",
 			"Matching");
 	
-	protected String clirMethod = ApplicationSetup.getProperty("clir.method",
-			"WeMono");
-
+	
 	/** The object that encapsulates the data structures used by Terrier. */
 	protected Index index;
 
@@ -280,6 +278,9 @@ public class TRECQuerying {
 	protected TermPipelineAccessor tpa;
 	protected HashMap<String, double[]> w2vmatrixSrc = new HashMap<String, double[]>();
 	protected HashMap<String, double[]> w2vmatrixTrg = new HashMap<String, double[]>();
+	
+	protected String clirMethod = ApplicationSetup.getProperty("clir.method",
+			"WeMono");
 
 	/**
 	 * TRECQuerying default constructor initialises the inverted index, the

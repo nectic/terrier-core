@@ -190,6 +190,8 @@ public class Manager
 	HashMap<String, double[]> fullw2vmatrix = new HashMap<String, double[]>();
 	public int number_of_top_translation_terms = Integer.valueOf(ApplicationSetup.getProperty("clir.number_of_top_translation_terms", ""));
 
+	protected String clirMethod = ApplicationSetup.getProperty("clir.method",
+			"WeMono");
 
 
 	/** Default constructor. Use the default index
@@ -215,7 +217,10 @@ public class Manager
 		this.load_postprocess_controls();
 		this.load_postfilters_controls();
 		//my custom
-		//this.load_w2v_inverted_translation();
+
+		if(clirMethod.toLowerCase().equals("wemono") || clirMethod.toLowerCase().equals("wemonotlm") || clirMethod.toLowerCase().equals("weclir") || clirMethod.toLowerCase().equals("weclirtlm")) {
+			this.load_w2v_inverted_translation();
+		}
 	}
 	/* ----------------------- Initialisation methods --------------------------*/
 
@@ -947,9 +952,7 @@ public class Manager
 		Request rq = (Request)srq;
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
 		{	
-			
-			this.load_w2v_inverted_translation();
-			
+
 			Model wmodel = getWeightingModel(rq);
 			if (rq.getControl("c_set").equals("true"))
 			{
