@@ -188,7 +188,8 @@ public class Manager
 	// my custom
 	public HashMap<String, TreeMultimap<Double, String> > w2v_inverted_translation = new HashMap<String, TreeMultimap<Double, String> >();
 	HashMap<String, double[]> fullw2vmatrix = new HashMap<String, double[]>();
-	public int number_of_top_translation_terms=5; //default value
+	public int number_of_top_translation_terms = Integer.valueOf(ApplicationSetup.getProperty("clir.number_of_top_translation_terms", ""));
+	
 	
 
 	/** Default constructor. Use the default index
