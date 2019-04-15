@@ -1338,6 +1338,10 @@ public class TRECQuerying {
 		//queryingManager.runPreProcessingTLM(srq);
 		//queryingManager.runMatching(srq);
 		
+		if(clirMethod.toLowerCase().equals("dirichletlm")) {
+			queryingManager.runMatchingDirichletLM(srq);
+		}
+		
 		if(clirMethod.toLowerCase().equals("mono")) {
 			queryingManager.runMatchingMono(srq);
 		}
@@ -1355,7 +1359,7 @@ public class TRECQuerying {
 			queryingManager.runMatchingWeCLIR(srq);
 		}
 		
-		if(clirMethod.toLowerCase().equals("wecltlm")) {
+		if(clirMethod.toLowerCase().equals("weclirtlm")) {
 			queryingManager.runMatchingWeCLIRTLM(srq);
 		}
 		

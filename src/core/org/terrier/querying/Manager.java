@@ -34,6 +34,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -47,6 +48,7 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.terrier.matching.AccumulatorResultSet;
+import org.terrier.matching.CollectionResultSet;
 import org.terrier.matching.Matching;
 import org.terrier.matching.MatchingQueryTerms;
 import org.terrier.matching.Model;
@@ -55,12 +57,14 @@ import org.terrier.matching.ResultSet;
 import org.terrier.matching.dsms.BooleanScoreModifier;
 import org.terrier.matching.models.WeightingModel;
 import org.terrier.matching.models.WeightingModelFactory;
+import org.terrier.matching.models.WeightingModelLibrary;
 import org.terrier.querying.parser.FieldQuery;
 import org.terrier.querying.parser.Query;
 import org.terrier.querying.parser.QueryParser;
 import org.terrier.querying.parser.QueryParserException;
 import org.terrier.querying.parser.RequirementQuery;
 import org.terrier.querying.parser.SingleTermQuery;
+import org.terrier.structures.BitIndexPointer;
 import org.terrier.structures.Index;
 import org.terrier.structures.LexiconEntry;
 import org.terrier.structures.postings.IterablePosting;
@@ -216,9 +220,11 @@ public class Manager
 		this.load_preprocess_controls();
 		this.load_postprocess_controls();
 		this.load_postfilters_controls();
-		//my custom
 
-		if(clirMethod.toLowerCase().equals("wemono") || clirMethod.toLowerCase().equals("wemonotlm") || clirMethod.toLowerCase().equals("weclir") || clirMethod.toLowerCase().equals("weclirtlm")) {
+		//my custom
+		if(clirMethod.toLowerCase().equals("wemono") || clirMethod.toLowerCase().equals("wemonotlm") || 
+				clirMethod.toLowerCase().equals("weclir") || clirMethod.toLowerCase().equals("weclirtlm") ||
+				clirMethod.toLowerCase().equals("dirichletlm")) {
 			this.load_w2v_inverted_translation();
 		}
 	}
@@ -855,6 +861,130 @@ public class Manager
 
 
 	}
+
+	public void runMatchingDirichletLM(SearchRequest srq){
+
+		Request rq = (Request)srq;
+		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY ) {
+			try {
+
+				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
+
+				//ResultSet rs = new CollectionResultSet(index.getEnd());
+
+				//double[] log_p_d_q = new double[this.index.getCollectionStatistics().getNumberOfDocuments()];
+				//Arrays.fill(log_p_d_q, -1000.0);
+
+				String[] queryTerms = rq.getQuery().toString().split(" ");
+
+				//iterating over all query terms
+				for(int i=0; i<queryTerms.length;i++) {
+
+					AccumulatorResultSet rs = (AccumulatorResultSet) resultSet;
+
+					String w = queryTerms[i];
+
+					HashMap<String, Double> top_translations_of_w = getTopW2VTranslations(w);
+					//HashMap<String, HashMap<Integer, Double>> p_u_d_distributions = new HashMap<String, HashMap<Integer, Double>>();
+
+					for(String u : top_translations_of_w.keySet()) {
+
+						String uPipelined = tpa.pipelineTerm(u);
+						if(uPipelined==null) {
+							System.err.println("Translated Term delected after pipeline: "+u);
+							continue;
+						}
+
+						LexiconEntry lu = index.getLexicon().getLexiconEntry(uPipelined);
+						if (lu==null) {
+							System.err.println("Term Not Found: "+uPipelined);
+							continue;
+						}
+
+						IterablePosting uPostings = index.getInvertedIndex().getPostings((BitIndexPointer) lu);
+
+						while(uPostings.next() != IterablePosting.EOL) {
+
+							double tf = (double)uPostings.getFrequency();
+							//double c = this.mu;
+							double c = 2500.0;
+							double numberOfTokens = (double) this.index.getCollectionStatistics().getNumberOfTokens();
+							double docLength = (double) uPostings.getDocumentLength();
+							double colltermFrequency = (double)lu.getFrequency();
+
+							double score = WeightingModelLibrary.log(1 + (tf/(c * (colltermFrequency / numberOfTokens))) ) + WeightingModelLibrary.log(c/(docLength+c));
+
+							int docid = uPostings.getId();
+
+							rs.scoresMap.adjustOrPutValue(docid, score, score);
+							rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
+
+						}
+
+					}
+
+
+					/*
+					for(String u : top_translations_of_w.keySet()) {
+
+						String uPipelined = tpa.pipelineTerm(u);
+						if(uPipelined==null) {
+							System.err.println("Translated Term delected after pipeline: "+u);
+							continue;
+						}
+						LexiconEntry lu = index.getLexicon().getLexiconEntry(uPipelined);
+						if (lu==null) {
+							System.err.println("Term Not Found: "+uPipelined);
+							continue;
+						}
+						//Index index = Index.createIndex();
+						//LexiconEntry lu = this.lex.getLexiconEntry( u );
+						IterablePosting uPostings = index.getInvertedIndex().getPostings((BitIndexPointer) lu);
+
+						while(uPostings.next() != IterablePosting.EOL) {
+
+							double tf = (double)uPostings.getFrequency();
+							//double c = this.mu;
+							double c = 2500.0;
+							double numberOfTokens = (double) this.index.getCollectionStatistics().getNumberOfTokens();
+							double docLength = (double) uPostings.getDocumentLength();
+							double colltermFrequency = (double)lu.getFrequency();
+
+							double score = WeightingModelLibrary.log(1 + (tf/(c * (colltermFrequency / numberOfTokens))) ) + WeightingModelLibrary.log(c/(docLength+c));
+
+							int docid = uPostings.getId();
+
+							rs.scoresMap.adjustOrPutValue(docid, score, score);
+							rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
+
+						}
+
+					}
+
+					 */
+
+				}
+
+				resultSet.initialise();
+
+				//check to see if we have any negative infinity scores that should be removed
+				int badDocuments = 0;
+				for (int i = 0; i < resultSet.getResultSize(); i++) {
+					if (resultSet.getScores()[i] == Double.NEGATIVE_INFINITY)
+						badDocuments++;
+				}
+				logger.debug("Found "+badDocuments+" documents with a score of negative infinity in the result set returned, they will be removed.");
+
+				//now crop the collectionresultset down to a query result set.
+				rq.setResultSet(resultSet.getResultSet(0, resultSet.getResultSize()-badDocuments));
+
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+
+	}
+
 	public void runMatchingWeMono(SearchRequest srq){
 		Request rq = (Request)srq;
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
@@ -1051,66 +1181,64 @@ public class Manager
 	}
 
 	public void runMatchingWeCLIRTLM(SearchRequest srq){
+		
+		Request rq = (Request)srq;
+		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY ) {
+			try {
 
-
-		/*
-		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
-		{			
-			Model wmodel = getWeightingModel(rq);
-			if (rq.getControl("c_set").equals("true"))
-			{
-				wmodel.setParameter(Double.parseDouble(rq.getControl("c")));
-			}
-			WeightingModel model = (WeightingModel)wmodel;
-			try{
 				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
 				String[] queryTerms = rq.getQuery().toString().split(" ");
-				final long starttime = System.currentTimeMillis();		
-				for(int i=0; i<queryTerms.length;i++){
-					//assignScores(i, (AccumulatorResultSet) resultSet, plm.getPosting(i));
+
+				//iterating over all query terms
+				for(int i=0; i<queryTerms.length;i++) {
+
 					AccumulatorResultSet rs = (AccumulatorResultSet) resultSet;
-					int docid;
-					double score;
+
 					String w = queryTerms[i];
-					HashMap<String, Double> top_translations_of_w = getTopW2VTranslations_atquerytimeCl(w,"terms_similarity","word_embedding_src");
 
-					//String wPipelined = tpa.pipelineTerm(queryTerms[i]);
-
+					HashMap<String, Double> top_translations_of_w = getTopW2VTranslations(w);
+					//HashMap<String, HashMap<Integer, Double>> p_u_d_distributions = new HashMap<String, HashMap<Integer, Double>>();
 
 					for(String u : top_translations_of_w.keySet()) {
+
 						String uPipelined = tpa.pipelineTerm(u);
 						if(uPipelined==null) {
-							System.err.println("Term delected after pipeline: "+u);
+							System.err.println("Translated Term delected after pipeline: "+u);
 							continue;
 						}
-						LexiconEntry lEntry = index.getLexicon().getLexiconEntry(uPipelined);
-						if (lEntry==null)
-						{
+
+						LexiconEntry lu = index.getLexicon().getLexiconEntry(uPipelined);
+						if (lu==null) {
 							System.err.println("Term Not Found: "+uPipelined);
 							continue;
 						}
-						IterablePosting postings = index.getInvertedIndex().getPostings(lEntry);
-						while (postings.next() != IterablePosting.EOL) {			
-							model.setCollectionStatistics(this.index.getCollectionStatistics());
-							model.setEntryStatistics(lEntry);
-							model.setKeyFrequency(1);
-							model.setParameter(0.75);
-							model.prepare();
-							score =	model.score(postings);
-							docid = postings.getId();
+
+						IterablePosting uPostings = index.getInvertedIndex().getPostings((BitIndexPointer) lu);
+
+						while(uPostings.next() != IterablePosting.EOL) {
+
+							double tf = (double)uPostings.getFrequency();
+							//double c = this.mu;
+							double c = 500.0;
+							double numberOfTokens = (double) this.index.getCollectionStatistics().getNumberOfTokens();
+							double docLength = (double) uPostings.getDocumentLength();
+							double colltermFrequency = (double)lu.getFrequency();
+
+							double score = WeightingModelLibrary.log(1 + (tf/(c * (colltermFrequency / numberOfTokens))) ) + WeightingModelLibrary.log(c/(docLength+c));
+
+							int docid = uPostings.getId();
+
 							rs.scoresMap.adjustOrPutValue(docid, score, score);
 							rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
+
 						}
 
 					}
 
+
 				}
 
 				resultSet.initialise();
-
-				int numberOfRetrievedDocuments = resultSet.getExactResultSize();
-				if (logger.isDebugEnabled())
-					logger.debug("Time to match "+numberOfRetrievedDocuments+" results: " + (System.currentTimeMillis() - starttime) + "ms");
 
 				//check to see if we have any negative infinity scores that should be removed
 				int badDocuments = 0;
@@ -1122,18 +1250,12 @@ public class Manager
 
 				//now crop the collectionresultset down to a query result set.
 				rq.setResultSet(resultSet.getResultSet(0, resultSet.getResultSize()-badDocuments));
-			} catch (IOException ioe) {
-				logger.error("Problem running Matching, returning empty result set as query"+rq.getQueryID(), ioe);
-				rq.setResultSet(new QueryResultSet(0));
+
+			} catch (IOException e) {
+				e.printStackTrace();
 			}
 		}
-		else
-		{
-			logger.warn("Returning empty result set as query "+rq.getQueryID()+" is empty");
-			rq.setResultSet(new QueryResultSet(0));
-		}
 
-		 */
 	}
 
 	/** Reads a serialized object of type HashMap<String, TreeMultimap<Double, String> > (w2v serialised inverted map)
