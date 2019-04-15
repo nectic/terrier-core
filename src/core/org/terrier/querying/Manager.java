@@ -1182,9 +1182,19 @@ public class Manager
 
 	public void runMatchingWeCLIRTLM(SearchRequest srq){
 		
+		
+		double c = 500.0;
+		
 		Request rq = (Request)srq;
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY ) {
 			try {
+				
+				if (rq.getControl("c_set").equals("true"))
+				{
+					//wmodel.setParameter(Double.parseDouble(rq.getControl("c")));
+					c = Double.parseDouble(rq.getControl("c"));
+				}
+				
 
 				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
 				String[] queryTerms = rq.getQuery().toString().split(" ");
@@ -1219,7 +1229,7 @@ public class Manager
 
 							double tf = (double)uPostings.getFrequency();
 							//double c = this.mu;
-							double c = 500.0;
+							//double c = 500.0;
 							double numberOfTokens = (double) this.index.getCollectionStatistics().getNumberOfTokens();
 							double docLength = (double) uPostings.getDocumentLength();
 							double colltermFrequency = (double)lu.getFrequency();
