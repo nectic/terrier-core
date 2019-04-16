@@ -985,12 +985,107 @@ public class Manager
 
 	}
 
+	public void runMatchingWeMonoTLM(SearchRequest srq){
+		double c = 500.0;
+		Request rq = (Request)srq;
+		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY ) {
+			try {
+				if (rq.getControl("c_set").equals("true"))
+				{
+					c = Double.parseDouble(rq.getControl("c"));
+				}
+				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
+				String[] queryTerms = rq.getQuery().toString().split(" ");
+				for(int i=0; i<queryTerms.length;i++) {
+					AccumulatorResultSet rs = (AccumulatorResultSet) resultSet;
+					String w = queryTerms[i];
+
+					HashMap<String, Double> top_translations_of_w = getTopW2VTranslations(w);
+
+					/*Preload the probabilities p(u|d)*/
+					HashMap<String, HashMap<Integer, Double>> p_u_d_distributions = new HashMap<String, HashMap<Integer, Double>>();
+					for(String u : top_translations_of_w.keySet()){
+						String uPipelined = tpa.pipelineTerm(u);
+						if(uPipelined==null) {
+							System.err.println("Translated Term delected after pipeline: "+u);
+							continue;
+						}
+						LexiconEntry lu = index.getLexicon().getLexiconEntry(uPipelined);
+						if (lu==null){
+							System.err.println("Term not found in corpora: "+uPipelined);
+							continue;
+						}
+						IterablePosting uPostings = index.getInvertedIndex().getPostings((BitIndexPointer) lu);
+						HashMap<Integer, Double> u_distribution = new HashMap<Integer, Double>();
+						while (uPostings.next() != IterablePosting.EOL) {
+							int doc = uPostings.getId();
+							double p_u_d = (double)uPostings.getFrequency()/(double)uPostings.getDocumentLength();
+							u_distribution.put(doc, p_u_d);
+						}
+						p_u_d_distributions.put(u, u_distribution);
+					}
+
+
+					String wPipelined = tpa.pipelineTerm(w);
+					if(wPipelined==null) {
+						System.err.println("Translated term delected after pipeline: "+w);
+						continue;
+					}
+					LexiconEntry lw = index.getLexicon().getLexiconEntry(wPipelined);
+					if (lw==null) {
+						System.err.println("Term not found in corpora: "+wPipelined);
+						continue;
+					}
+
+					IterablePosting wPostings = index.getInvertedIndex().getPostings((BitIndexPointer) lw);
+
+					while(wPostings.next() != IterablePosting.EOL) {
+						double tf = (double)wPostings.getFrequency();
+						double numberOfTokens = (double) index.getCollectionStatistics().getNumberOfTokens();
+						double docLength = (double) wPostings.getDocumentLength();
+						double colltermFrequency = (double)lw.getFrequency();
+
+						double sum_p_t_w_u = 0.0;
+						for(String u : top_translations_of_w.keySet()) {
+							double p_t_w_u = top_translations_of_w.get(u);
+							double p_u_d=0.0;
+							if(p_u_d_distributions.get(u).containsKey(wPostings.getId()))
+								p_u_d= p_u_d_distributions.get(u).get(wPostings.getId());
+							sum_p_t_w_u = sum_p_t_w_u + p_t_w_u * p_u_d;
+						}
+
+						double score =	
+								WeightingModelLibrary.log( (docLength* sum_p_t_w_u + c * (colltermFrequency/numberOfTokens)) / (c + docLength)) 
+								- WeightingModelLibrary.log( c/( c+ docLength) * (colltermFrequency/numberOfTokens) ) 
+								+ WeightingModelLibrary.log(c/(c + docLength));
+
+						int docid = wPostings.getId();
+						rs.scoresMap.adjustOrPutValue(docid, score, score);
+						rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
+					}
+				}
+				resultSet.initialise();
+				//check to see if we have any negative infinity scores that should be removed
+				int badDocuments = 0;
+				for (int i = 0; i < resultSet.getResultSize(); i++) {
+					if (resultSet.getScores()[i] == Double.NEGATIVE_INFINITY)
+						badDocuments++;
+				}
+				logger.debug("Found "+badDocuments+" documents with a score of negative infinity in the result set returned, they will be removed.");
+
+				rq.setResultSet(resultSet.getResultSet(0, resultSet.getResultSize()-badDocuments));
+
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+
+	}
+
 	public void runMatchingWeMono(SearchRequest srq){
 		Request rq = (Request)srq;
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY )
 		{
-
-			this.load_w2v_inverted_translation();
 
 			Model wmodel = getWeightingModel(rq);
 			if (rq.getControl("c_set").equals("true"))
@@ -1000,7 +1095,7 @@ public class Manager
 
 			WeightingModel model = (WeightingModel)wmodel;
 
-			try{
+			try {
 
 				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
 				String[] queryTerms = rq.getQuery().toString().split(" ");
@@ -1217,19 +1312,19 @@ public class Manager
 							double numberOfTokens = (double) this.index.getCollectionStatistics().getNumberOfTokens();
 							double docLength = (double) uPostings.getDocumentLength();
 							double colltermFrequency = (double)lu.getFrequency();
-							
+
 							double p_t_w_u = top_translations_of_w.get(u);
-							
+
 							double score =  WeightingModelLibrary.log(p_t_w_u)
-											+ WeightingModelLibrary.log(1 + (tf/(c * (colltermFrequency / numberOfTokens))) ) 
-											+ WeightingModelLibrary.log(c/(docLength+c));
-							
-							
+									+ WeightingModelLibrary.log(1 + (tf/(c * (colltermFrequency / numberOfTokens))) ) 
+									+ WeightingModelLibrary.log(c/(docLength+c));
+
+
 							//double score =	
-									//WeightingModelLibrary.log( (docLength* sum_p_t_w_u + c * (colltermFrequency/numberOfTokens)) / (c + docLength)) 
-									//- WeightingModelLibrary.log( c/( c+ docLength) * (colltermFrequency/numberOfTokens) ) 
-									//+ WeightingModelLibrary.log(c/(c + docLength));
-							
+							//WeightingModelLibrary.log( (docLength* sum_p_t_w_u + c * (colltermFrequency/numberOfTokens)) / (c + docLength)) 
+							//- WeightingModelLibrary.log( c/( c+ docLength) * (colltermFrequency/numberOfTokens) ) 
+							//+ WeightingModelLibrary.log(c/(c + docLength));
+
 							int docid = uPostings.getId();
 							rs.scoresMap.adjustOrPutValue(docid, score, score);
 							rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
@@ -1246,6 +1341,106 @@ public class Manager
 				logger.debug("Found "+badDocuments+" documents with a score of negative infinity in the result set returned, they will be removed.");
 
 				//now crop the collectionresultset down to a query result set.
+				rq.setResultSet(resultSet.getResultSet(0, resultSet.getResultSize()-badDocuments));
+
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+
+	}
+
+
+	public void runMatchingWeCLIRTLM2(SearchRequest srq){
+		double c = 500.0;
+		Request rq = (Request)srq;
+		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY ) {
+			try {
+				if (rq.getControl("c_set").equals("true"))
+				{
+					c = Double.parseDouble(rq.getControl("c"));
+				}
+				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
+				String[] queryTerms = rq.getQuery().toString().split(" ");
+				for(int i=0; i<queryTerms.length;i++) {
+					AccumulatorResultSet rs = (AccumulatorResultSet) resultSet;
+					String w = queryTerms[i];
+
+					HashMap<String, Double> top_translations_of_w = getTopW2VTranslations(w);
+
+					/*Preload the probabilities p(u|d)*/
+					HashMap<String, HashMap<Integer, Double>> p_u_d_distributions = new HashMap<String, HashMap<Integer, Double>>();
+					for(String u : top_translations_of_w.keySet()){
+						String uPipelined = tpa.pipelineTerm(u);
+						if(uPipelined==null) {
+							System.err.println("Translated Term delected after pipeline: "+u);
+							continue;
+						}
+						LexiconEntry lu = index.getLexicon().getLexiconEntry(uPipelined);
+						if (lu==null){
+							System.err.println("Term not found in corpora: "+uPipelined);
+							continue;
+						}
+						IterablePosting uPostings = index.getInvertedIndex().getPostings((BitIndexPointer) lu);
+						HashMap<Integer, Double> u_distribution = new HashMap<Integer, Double>();
+						while (uPostings.next() != IterablePosting.EOL) {
+							int doc = uPostings.getId();
+							double p_u_d = (double)uPostings.getFrequency()/(double)uPostings.getDocumentLength();
+							u_distribution.put(doc, p_u_d);
+						}
+						p_u_d_distributions.put(u, u_distribution);
+					}
+
+					for(String ww : top_translations_of_w.keySet()){
+
+						String wwPipelined = tpa.pipelineTerm(ww);
+						if(wwPipelined==null) {
+							System.err.println("Translated term delected after pipeline: "+ww);
+							continue;
+						}
+						LexiconEntry lww = index.getLexicon().getLexiconEntry(wwPipelined);
+						if (lww==null) {
+							System.err.println("Term not found in corpora: "+wwPipelined);
+							continue;
+						}
+
+						IterablePosting wPostings = index.getInvertedIndex().getPostings((BitIndexPointer) lww);
+
+						while(wPostings.next() != IterablePosting.EOL) {
+							double tf = (double)wPostings.getFrequency();
+							double numberOfTokens = (double) index.getCollectionStatistics().getNumberOfTokens();
+							double docLength = (double) wPostings.getDocumentLength();
+							double colltermFrequency = (double)lww.getFrequency();
+
+							double sum_p_t_w_u = 0.0;
+							for(String u : top_translations_of_w.keySet()) {
+								double p_t_w_u = top_translations_of_w.get(u);
+								double p_u_d=0.0;
+								if(p_u_d_distributions.get(u).containsKey(wPostings.getId()))
+									p_u_d= p_u_d_distributions.get(u).get(wPostings.getId());
+								sum_p_t_w_u = sum_p_t_w_u + p_t_w_u * p_u_d;
+							}
+
+							double score =	
+									WeightingModelLibrary.log( (docLength* sum_p_t_w_u + c * (colltermFrequency/numberOfTokens)) / (c + docLength)) 
+									- WeightingModelLibrary.log( c/( c+ docLength) * (colltermFrequency/numberOfTokens) ) 
+									+ WeightingModelLibrary.log(c/(c + docLength));
+
+							int docid = wPostings.getId();
+							rs.scoresMap.adjustOrPutValue(docid, score, score);
+							rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
+						}
+					}
+				}
+				resultSet.initialise();
+				//check to see if we have any negative infinity scores that should be removed
+				int badDocuments = 0;
+				for (int i = 0; i < resultSet.getResultSize(); i++) {
+					if (resultSet.getScores()[i] == Double.NEGATIVE_INFINITY)
+						badDocuments++;
+				}
+				logger.debug("Found "+badDocuments+" documents with a score of negative infinity in the result set returned, they will be removed.");
+
 				rq.setResultSet(resultSet.getResultSet(0, resultSet.getResultSize()-badDocuments));
 
 			} catch (IOException e) {

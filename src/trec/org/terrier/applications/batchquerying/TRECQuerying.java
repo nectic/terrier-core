@@ -1352,7 +1352,7 @@ public class TRECQuerying {
 		}
 		
 		if(clirMethod.toLowerCase().equals("wemonotlm")) {
-			
+			queryingManager.runMatchingWeMonoTLM(srq);
 		}
 		
 		if(clirMethod.toLowerCase().equals("weclir")) {
@@ -1361,6 +1361,10 @@ public class TRECQuerying {
 		
 		if(clirMethod.toLowerCase().equals("weclirtlm")) {
 			queryingManager.runMatchingWeCLIRTLM(srq);
+		}
+		
+		if(clirMethod.toLowerCase().equals("weclirtlm2")) {
+			queryingManager.runMatchingWeCLIRTLM2(srq);
 		}
 		
 		queryingManager.runPostProcessing(srq);
