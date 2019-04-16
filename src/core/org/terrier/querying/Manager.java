@@ -1181,75 +1181,62 @@ public class Manager
 	}
 
 	public void runMatchingWeCLIRTLM(SearchRequest srq){
-		
-		
 		double c = 500.0;
-		
 		Request rq = (Request)srq;
 		if ( (! rq.isEmpty()) || MATCH_EMPTY_QUERY ) {
 			try {
-				
 				if (rq.getControl("c_set").equals("true"))
 				{
 					//wmodel.setParameter(Double.parseDouble(rq.getControl("c")));
 					c = Double.parseDouble(rq.getControl("c"));
 				}
-				
-
 				ResultSet resultSet = new AccumulatorResultSet(index.getCollectionStatistics().getNumberOfDocuments());
 				String[] queryTerms = rq.getQuery().toString().split(" ");
-
 				//iterating over all query terms
 				for(int i=0; i<queryTerms.length;i++) {
-
 					AccumulatorResultSet rs = (AccumulatorResultSet) resultSet;
-
 					String w = queryTerms[i];
-
 					HashMap<String, Double> top_translations_of_w = getTopW2VTranslations(w);
 					//HashMap<String, HashMap<Integer, Double>> p_u_d_distributions = new HashMap<String, HashMap<Integer, Double>>();
-
 					for(String u : top_translations_of_w.keySet()) {
-
 						String uPipelined = tpa.pipelineTerm(u);
 						if(uPipelined==null) {
 							System.err.println("Translated Term delected after pipeline: "+u);
 							continue;
 						}
-
 						LexiconEntry lu = index.getLexicon().getLexiconEntry(uPipelined);
 						if (lu==null) {
 							System.err.println("Term Not Found: "+uPipelined);
 							continue;
 						}
-
 						IterablePosting uPostings = index.getInvertedIndex().getPostings((BitIndexPointer) lu);
-
 						while(uPostings.next() != IterablePosting.EOL) {
-
 							double tf = (double)uPostings.getFrequency();
 							//double c = this.mu;
 							//double c = 500.0;
 							double numberOfTokens = (double) this.index.getCollectionStatistics().getNumberOfTokens();
 							double docLength = (double) uPostings.getDocumentLength();
 							double colltermFrequency = (double)lu.getFrequency();
-
-							double score = WeightingModelLibrary.log(1 + (tf/(c * (colltermFrequency / numberOfTokens))) ) + WeightingModelLibrary.log(c/(docLength+c));
-
+							
+							double p_t_w_u = top_translations_of_w.get(u);
+							
+							double score =  WeightingModelLibrary.log(p_t_w_u)
+											+ WeightingModelLibrary.log(1 + (tf/(c * (colltermFrequency / numberOfTokens))) ) 
+											+ WeightingModelLibrary.log(c/(docLength+c));
+							
+							
+							//double score =	
+									//WeightingModelLibrary.log( (docLength* sum_p_t_w_u + c * (colltermFrequency/numberOfTokens)) / (c + docLength)) 
+									//- WeightingModelLibrary.log( c/( c+ docLength) * (colltermFrequency/numberOfTokens) ) 
+									//+ WeightingModelLibrary.log(c/(c + docLength));
+							
 							int docid = uPostings.getId();
-
 							rs.scoresMap.adjustOrPutValue(docid, score, score);
 							rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
-
 						}
-
 					}
-
-
 				}
-
 				resultSet.initialise();
-
 				//check to see if we have any negative infinity scores that should be removed
 				int badDocuments = 0;
 				for (int i = 0; i < resultSet.getResultSize(); i++) {
