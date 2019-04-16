@@ -224,7 +224,7 @@ public class Manager
 		//my custom
 		if(clirMethod.toLowerCase().equals("wemono") || clirMethod.toLowerCase().equals("wemonotlm") || 
 				clirMethod.toLowerCase().equals("weclir") || clirMethod.toLowerCase().equals("weclirtlm") ||
-				clirMethod.toLowerCase().equals("dirichletlm")) {
+				clirMethod.toLowerCase().equals("dirichletlm") || clirMethod.toLowerCase().equals("weclirtlm2")) {
 			this.load_w2v_inverted_translation();
 		}
 	}
