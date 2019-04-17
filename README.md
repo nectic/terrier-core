@@ -15,6 +15,8 @@ bin/trec_terrier.sh -r -Dtrec.model=BM25 -Dtrec.topics=share/clef/query_title_fr
 
 bin/trec_terrier.sh -r -c 500.0 -Dtrec.model=DirichletLM -Dtrec.topics=share/clef/query_title_fr.trec -Dclir.method=WeCLIRTLM -Dclir.score.file=/home/mrim/doumbise/data/score_fr_en_eeb1.ser -Dclir.number_of_top_translation_terms=1
 
+bin/trec_terrier.sh -r -c 500.0 -Dtrec.model=DirichletLM -Dtrec.topics=share/clef/query_title_fr.trec -Dclir.method=WeCLIRTLM2 -Dclir.score.file=/home/mrim/doumbise/scores/score_fr_en_eeb1.ser -Dclir.number_of_top_translation_terms=1
+
 bin/trec_terrier.sh -e -Dtrec.qrels=share/clef/qrels
 
 
