@@ -1238,7 +1238,7 @@ public class Manager
 							model.prepare();
 							score =	model.score(postings);
 							//double p_t_w_u = top_translations_of_w.get(u);
-							score = top_translations_of_w.get(u)*score;
+							//score = top_translations_of_w.get(u)*score;
 							docid = postings.getId();
 							rs.scoresMap.adjustOrPutValue(docid, score, score);
 							rs.occurrencesMap.put(docid, (short)(rs.occurrencesMap.get(docid)));
