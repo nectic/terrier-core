@@ -1487,7 +1487,7 @@ public class Manager
 				while(termit.hasNext()) {
 					String topterm = termit.next();
 					if(count<this.number_of_top_translation_terms) {
-						//System.out.println("\t  " + p_w_u + ": " + topterm);
+						System.out.println("\t  " + p_w_u + ": " + topterm);
 						w_top_cooccurence.put(topterm, p_w_u);
 						sums_u=sums_u + p_w_u;
 						count ++;
@@ -1498,7 +1498,7 @@ public class Manager
 				break;
 		}
 
-		/*
+		
 		//normalised based on u
 		HashMap<String, Double> tmp_w_top_cooccurence = new HashMap<String, Double>();
 		int tcount=0;
@@ -1510,9 +1510,9 @@ public class Manager
 		}
 		System.out.println(tcount + " translations selected, for a cumulative sum of " + cumsum);
 		return tmp_w_top_cooccurence;
-		*/
 		
-		return w_top_cooccurence;
+		
+		//return w_top_cooccurence;
 	}
 
 	public HashMap<String, Double> getTopW2VTranslations_atquerytime(String w) {
