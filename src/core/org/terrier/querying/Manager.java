@@ -1314,12 +1314,10 @@ public class Manager
 							double numberOfTokens = (double) this.index.getCollectionStatistics().getNumberOfTokens();
 							double docLength = (double) uPostings.getDocumentLength();
 							double colltermFrequency = (double)lu.getFrequency();
-
 							double p_t_w_u = top_translations_of_w.get(u);
 
-							double score =  WeightingModelLibrary.log(p_t_w_u)
-									+ WeightingModelLibrary.log(1 + (tf/(c * (colltermFrequency / numberOfTokens))) ) 
-									+ WeightingModelLibrary.log(c/(docLength+c));
+							double score =  p_t_w_u * ( WeightingModelLibrary.log( (tf/docLength)*docLength + c * (colltermFrequency / numberOfTokens)) 
+									- WeightingModelLibrary.log(docLength+c) );
 
 
 							//double score =	
