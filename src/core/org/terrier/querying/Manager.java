@@ -1487,7 +1487,7 @@ public class Manager
 				while(termit.hasNext()) {
 					String topterm = termit.next();
 					if(count<this.number_of_top_translation_terms) {
-						System.out.println("\t  " + p_w_u + ": " + topterm);
+						//System.out.println("\t  " + p_w_u + ": " + topterm);
 						w_top_cooccurence.put(topterm, p_w_u);
 						sums_u=sums_u + p_w_u;
 						count ++;
